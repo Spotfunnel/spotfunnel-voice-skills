@@ -6,22 +6,11 @@
 #
 #   PSTN  ->  Telnyx DID  ->  TeXML app  ->  Ultravox agent telephony_xml
 #
-# Mirrors VAM's `TelnyxClient.repoint_texml_app` (services/api/src/api/
-# telnyx.py): a single PATCH to the TeXML app sets `voice_url` to
-# https://app.ultravox.ai/api/agents/{agent_id}/telephony_xml. VAM also
-# (re)sets status_callback on every claim — we leave that to
-# telnyx-wire-texml.sh which audits it.
-#
-# Pattern question (per-customer TeXML vs pool-with-routing):
-#   Read of VAM: each row in the `phone_number_pool` table carries its own
-#   `texml_app_id`, so per-DID = per-TeXML-app. The portable skill has no
-#   pool table to look up per-DID app IDs from, so it operates against the
-#   TeXML app the DID is *currently* bound to (resolved at runtime via GET
-#   phone_number) and PATCHes that app's voice_url. If the operator runs
-#   one shared TeXML app across many DIDs (the simpler/cheaper "pool"
-#   model), the LAST claim wins — every DID routes to the most recently
-#   wired agent. That's a known limitation called out in /base-agent's
-#   ENV_SETUP and only matters at >1 active customer per pool TeXML app.
+# Pool model: one TeXML app per DID, set up once by
+# `bulk-create-texml-apps.sh`. This script resolves the DID's TeXML app at
+# runtime (GET phone_number) and PATCHes that app's voice_url. Because the
+# app is dedicated to a single DID, the PATCH only ever affects this one
+# customer.
 #
 # Args:
 #   --did <+E.164>             required.

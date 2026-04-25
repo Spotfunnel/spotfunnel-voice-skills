@@ -1,40 +1,32 @@
 #!/bin/bash
 # scripts/telnyx-wire-texml.sh
 #
-# Verify (and where appropriate, repair) that a claimed DID is correctly
-# bound to the operator's pool TeXML app, and that the pool TeXML app
-# itself has the right codec + a non-empty status_callback URL.
+# Verify the per-DID TeXML app is correctly configured: codec set,
+# voice_method=POST, status_callback present, status_callback_method=POST.
 #
-# Mirrors VAM's `claim_did_for_user` post-claim invariants. VAM PATCHes
-# voice_url + status_callback on the TeXML app on every repoint; this
-# script enforces the DID-side bind and audits the TeXML-side settings
-# without overwriting them blindly (codec changes are pool-wide and
-# therefore an ops decision, not per-customer).
+# The TeXML app this script audits is the one the DID is *currently* bound
+# to (resolved at runtime via GET /v2/phone_numbers). With the one-app-per-
+# DID model produced by `bulk-create-texml-apps.sh`, the binding is set up
+# at pool creation time and never changes — so we only need the DID.
 #
 # Args:
 #   --did <+E.164>              required.
-#   --texml-app-id <id>         optional, defaults to $TELNYX_POOL_TEXML_APP_ID.
+#   --texml-app-id <id>         optional override. Defaults to the
+#                                 connection_id discovered on the DID.
 #   --out <dir>                 required.
 #   --help                      print usage.
 #
 # Env:
 #   TELNYX_API_KEY              required.
-#   TELNYX_POOL_TEXML_APP_ID    required when --texml-app-id is omitted.
 #
 # Behavior:
-#   1. GET phone_number — confirm voice.connection_id == TeXML app id.
-#      If not, PATCH the DID's voice connection to the TeXML app.
-#   2. GET texml_application — confirm codec is set (16 kHz preferred;
-#      g711 acceptable). Mismatch = WARN only (codec is pool-wide).
-#   3. Confirm status_callback is a non-empty URL. Missing = FAIL with
-#      diagnostic (the operator's webhook URL is mandatory for our
-#      warm-transfer + lifecycle wiring).
+#   1. GET phone_number — capture its current connection_id (the TeXML app).
+#   2. GET texml_application — verify codec + voice_method +
+#      status_callback + status_callback_method.
+#   3. Write texml-wired.json with the verification result.
 #
-# If this script halts because of a missing status_callback, malformed
-# voice_url, or unbound DID, the fix is operator-side — see INSTALL.md
-# §4.2 step 5 for the canonical TeXML application configuration recipe
-# (voice_url, voice_method, codec, status_callback, status_callback_method,
-# status callback events). This script verifies; INSTALL.md §4.2 sets up.
+# Codec mismatch is WARN-only. Missing/malformed status_callback is HARD
+# FAIL — the call lifecycle webhook needs that URL to fire.
 #
 # Writes <out>/texml-wired.json. Exit 1 on any non-recoverable failure.
 
@@ -47,13 +39,14 @@ Usage: bash scripts/telnyx-wire-texml.sh \
     [--texml-app-id <id>] \
     --out <dir>
 
-Verifies the DID is bound to the pool TeXML app, audits the TeXML app's
-codec + status_callback, and writes texml-wired.json with results.
+Discovers the TeXML app the DID is bound to (or uses --texml-app-id if
+provided), audits codec + voice_method + status_callback +
+status_callback_method, and writes texml-wired.json.
 EOF
 }
 
 DID=""
-TEXML_APP_ID=""
+TEXML_APP_ID_OVERRIDE=""
 OUT_DIR=""
 
 while [ $# -gt 0 ]; do
@@ -63,7 +56,7 @@ while [ $# -gt 0 ]; do
       shift 2
       ;;
     --texml-app-id)
-      TEXML_APP_ID="${2:-}"
+      TEXML_APP_ID_OVERRIDE="${2:-}"
       shift 2
       ;;
     --out)
@@ -95,23 +88,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/env-check.sh" >/dev/null
 
-if [ -z "$TEXML_APP_ID" ]; then
-  TEXML_APP_ID="$TELNYX_POOL_TEXML_APP_ID"
-fi
-if [ -z "$TEXML_APP_ID" ]; then
-  echo "[ERR] no --texml-app-id and TELNYX_POOL_TEXML_APP_ID is empty" >&2
-  exit 1
-fi
-
 mkdir -p "$OUT_DIR"
 
 NOW_ISO="$(python3 -c 'from datetime import datetime, timezone; print(datetime.now(timezone.utc).isoformat())')"
 
-# ----- Step 1: GET phone_number, find by E.164 -----
+# ----- Step 1: GET phone_number, capture connection_id -----
 PN_RESP="$(mktemp)"
 APP_RESP="$(mktemp)"
-PATCH_RESP="$(mktemp)"
-trap 'rm -f "$PN_RESP" "$APP_RESP" "$PATCH_RESP"' EXIT
+trap 'rm -f "$PN_RESP" "$APP_RESP"' EXIT
 
 echo "[INFO] looking up DID $DID in Telnyx phone_numbers"
 HTTP_CODE="$(curl --ssl-no-revoke -sS -o "$PN_RESP" -w "%{http_code}" \
@@ -148,29 +132,22 @@ fi
 PN_ID="${PN_INFO%%|*}"
 CURRENT_CONN="${PN_INFO##*|}"
 
-DID_BOUND="false"
-if [ "$CURRENT_CONN" = "$TEXML_APP_ID" ]; then
-  DID_BOUND="true"
-  echo "[OK] DID $DID already bound to TeXML app $TEXML_APP_ID"
+if [ -n "$TEXML_APP_ID_OVERRIDE" ]; then
+  TEXML_APP_ID="$TEXML_APP_ID_OVERRIDE"
+  echo "[INFO] using --texml-app-id override: $TEXML_APP_ID (DID is bound to $CURRENT_CONN)"
 else
-  echo "[WARN] DID $DID has connection_id=$CURRENT_CONN, expected $TEXML_APP_ID — patching"
-  PAYLOAD="$(python3 -c 'import json,sys; print(json.dumps({"connection_id": sys.argv[1]}))' "$TEXML_APP_ID")"
-  HTTP_CODE="$(curl --ssl-no-revoke -sS -o "$PATCH_RESP" -w "%{http_code}" \
-    -X PATCH "https://api.telnyx.com/v2/phone_numbers/$PN_ID" \
-    -H "Authorization: Bearer $TELNYX_API_KEY" \
-    -H "Content-Type: application/json" \
-    -d "$PAYLOAD")"
-  if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
-    echo "[ERR] Telnyx PATCH phone_number returned HTTP $HTTP_CODE" >&2
-    cat "$PATCH_RESP" >&2
-    echo >&2
-    exit 1
-  fi
-  DID_BOUND="true"
-  echo "[OK] DID $DID re-bound to TeXML app $TEXML_APP_ID"
+  TEXML_APP_ID="$CURRENT_CONN"
 fi
 
-# ----- Step 2 + 3: GET TeXML app, audit codec + status_callback -----
+if [ -z "$TEXML_APP_ID" ]; then
+  echo "[ERR] DID $DID has no connection_id (TeXML app) bound — run bulk-create-texml-apps.sh first" >&2
+  exit 1
+fi
+
+DID_BOUND="true"
+echo "[OK] DID $DID bound to TeXML app $TEXML_APP_ID"
+
+# ----- Step 2: GET TeXML app, audit codec / voice_method / status_callback -----
 echo "[INFO] fetching TeXML app $TEXML_APP_ID"
 HTTP_CODE="$(curl --ssl-no-revoke -sS -o "$APP_RESP" -w "%{http_code}" \
   -X GET "https://api.telnyx.com/v2/texml_applications/$TEXML_APP_ID" \
@@ -183,9 +160,6 @@ if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
   exit 1
 fi
 
-# Extract codec + status_callback. Telnyx's TeXML app schema exposes
-# `inbound.channel_limit`, `inbound.codecs` (list), and root-level
-# `status_callback`. Fall back across known field name variants.
 APP_INFO="$(python3 - "$APP_RESP" <<'PY'
 import json, sys
 with open(sys.argv[1], "r", encoding="utf-8") as f:
@@ -200,30 +174,40 @@ if isinstance(inbound, dict):
         codecs = [str(c) for c in raw]
 codec_str = ",".join(codecs) if codecs else ""
 
-# Status-callback location varies between Telnyx schema versions. Try the
-# obvious places. We treat ANY non-empty URL as acceptable — the operator
-# controls the URL, we just demand it be set.
+# Status-callback location varies between Telnyx schema versions.
 status_cb = (
     data.get("status_callback")
     or data.get("statusCallback")
     or ""
 )
+status_cb_method = (
+    data.get("status_callback_method")
+    or data.get("statusCallbackMethod")
+    or ""
+)
+voice_method = (
+    data.get("voice_method")
+    or data.get("voiceMethod")
+    or ""
+)
 
-# Codec OK heuristic: PCM 16k preferred; G711 fallback acceptable. The
-# pool ships with these by default in VAM. Anything else = warn.
 known_ok = {"PCMU", "PCMA", "G722", "OPUS", "L16", "G711U", "G711A"}
 codec_ok = False
 if codecs:
     codec_ok = any(c.upper() in known_ok or c.upper().startswith("G711") or c.upper().startswith("L16") for c in codecs)
 
-print(f"{codec_str}|||{int(codec_ok)}|||{status_cb}")
+print(f"{codec_str}|||{int(codec_ok)}|||{status_cb}|||{status_cb_method}|||{voice_method}")
 PY
 )"
 
 CODEC="${APP_INFO%%|||*}"
 REST="${APP_INFO#*|||}"
 CODEC_OK_INT="${REST%%|||*}"
-STATUS_CB="${REST#*|||}"
+REST="${REST#*|||}"
+STATUS_CB="${REST%%|||*}"
+REST="${REST#*|||}"
+STATUS_CB_METHOD="${REST%%|||*}"
+VOICE_METHOD="${REST#*|||}"
 
 CODEC_OK="false"
 if [ "$CODEC_OK_INT" = "1" ]; then
@@ -233,10 +217,16 @@ fi
 if [ "$CODEC_OK" = "true" ]; then
   echo "[OK] codec(s)=[$CODEC]"
 else
-  echo "[WARN] codec(s)=[$CODEC] not in known-good set — pool-wide config, treat as ops decision"
+  echo "[WARN] codec(s)=[$CODEC] not in known-good set — ops decision (re-run bulk-create-texml-apps.sh to reset)"
 fi
 
-# Status callback validation: must be non-empty AND look like an http(s) URL.
+# voice_method audit (informational — bulk-create-texml-apps.sh sets it).
+case "$(echo "$VOICE_METHOD" | tr '[:upper:]' '[:lower:]')" in
+  post) echo "[OK] voice_method=POST" ;;
+  *)    echo "[WARN] voice_method='$VOICE_METHOD' (expected POST)" ;;
+esac
+
+# status_callback validation.
 STATUS_CB_OK="false"
 case "$STATUS_CB" in
   http://*|https://*) STATUS_CB_OK="true" ;;
@@ -247,7 +237,19 @@ if [ "$STATUS_CB_OK" = "true" ]; then
   echo "[OK] status_callback is set: $STATUS_CB"
 else
   echo "[ERR] TeXML app $TEXML_APP_ID has no status_callback URL (or it's malformed: '$STATUS_CB')" >&2
-  echo "[ERR] Set status_callback on the TeXML app in your Telnyx console — required for call lifecycle webhooks" >&2
+  echo "[ERR] Re-run bulk-create-texml-apps.sh — it sets status_callback to \$DASHBOARD_SERVER_URL/webhooks/call-ended" >&2
+fi
+
+# status_callback_method audit.
+STATUS_CB_METHOD_OK="false"
+case "$(echo "$STATUS_CB_METHOD" | tr '[:upper:]' '[:lower:]')" in
+  post) STATUS_CB_METHOD_OK="true" ;;
+esac
+
+if [ "$STATUS_CB_METHOD_OK" = "true" ]; then
+  echo "[OK] status_callback_method=POST"
+else
+  echo "[WARN] status_callback_method='$STATUS_CB_METHOD' (expected POST)"
 fi
 
 # ----- Write texml-wired.json -----
@@ -259,6 +261,9 @@ CODEC_VAL="$CODEC" \
 CODEC_OK_VAL="$CODEC_OK" \
 STATUS_CB_VAL="$STATUS_CB" \
 STATUS_CB_OK_VAL="$STATUS_CB_OK" \
+STATUS_CB_METHOD_VAL="$STATUS_CB_METHOD" \
+STATUS_CB_METHOD_OK_VAL="$STATUS_CB_METHOD_OK" \
+VOICE_METHOD_VAL="$VOICE_METHOD" \
 TEXML_APP_VAL="$TEXML_APP_ID" \
 NOW_ISO_VAL="$NOW_ISO" \
 python3 - "$OUT_PATH" <<'PY'
@@ -270,8 +275,11 @@ payload = {
     "did_bound": os.environ["DID_BOUND_VAL"] == "true",
     "codec": os.environ["CODEC_VAL"],
     "codec_ok": os.environ["CODEC_OK_VAL"] == "true",
+    "voice_method": os.environ["VOICE_METHOD_VAL"],
     "status_callback": os.environ["STATUS_CB_VAL"],
     "status_callback_ok": os.environ["STATUS_CB_OK_VAL"] == "true",
+    "status_callback_method": os.environ["STATUS_CB_METHOD_VAL"],
+    "status_callback_method_ok": os.environ["STATUS_CB_METHOD_OK_VAL"] == "true",
     "verified_at": os.environ["NOW_ISO_VAL"],
 }
 with open(out_path, "w", encoding="utf-8") as f:

@@ -30,7 +30,8 @@ The full list with descriptions lives in `.env.example`. Summary:
 
 **Reference assets in your accounts:**
 - `REFERENCE_ULTRAVOX_AGENT_ID` — the Ultravox agent whose voice/temperature/inactivity settings get copied onto every new customer
-- `TELNYX_POOL_TEXML_APP_ID` — the TeXML application backing your DID pool
+
+> Telnyx pool TeXML apps are auto-discovered at claim time via tags (`pool:available` / `claimed:<slug>`) — no env var to set. Run `base-agent-setup/scripts/bulk-create-texml-apps.sh` once at install to create them.
 
 **n8n (consumed by the chained `/onboard-customer` skill):**
 - `N8N_BASE_URL`

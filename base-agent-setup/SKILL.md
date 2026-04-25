@@ -43,7 +43,6 @@ Required vars (each documented in `.env.example` at repo root):
 - `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`
 - `RESEND_API_KEY`, `RESEND_FROM_EMAIL`, `OPS_ALERT_EMAIL`
 - `REFERENCE_ULTRAVOX_AGENT_ID` — the operator's chosen reference agent (e.g. TelcoWorks-Jack)
-- `TELNYX_POOL_TEXML_APP_ID` — the operator's pool TeXML app
 - `DASHBOARD_SERVER_URL` — used by the `/onboard-customer` handoff at Stage 11
 - `N8N_BASE_URL`, `N8N_API_KEY`, `N8N_ERROR_REPORTER_WORKFLOW_ID` — used by `/onboard-customer` Stage 7b
 
@@ -440,13 +439,14 @@ bash scripts/telnyx-claim-did.sh \
 
 The script:
 
-- Lists DIDs bound to `$TELNYX_POOL_TEXML_APP_ID`.
-- Filters out DIDs already tagged `claimed:*`.
-- Filters by area code (falls back to any-AU if no match unless `--strict-area-code` is passed).
-- Picks the first match.
+- Lists every TeXML app in the account (`GET /v2/texml_applications`) and filters to apps tagged `pool:available` AND not already tagged `claimed:*`.
+- Cross-references each app's bound DID against `--area-code` (falls back to any-AU if no match unless `--strict-area-code` is passed).
+- Picks one and tags its TeXML app `claimed:<slug>` (keeping `pool:available` for auditability).
 - Fires a Resend `warn` alert to `$OPS_ALERT_EMAIL` if pool remaining after this claim is `< 3`.
 - Fires a Resend `crit` alert and exits 1 if the pool is empty.
 - Writes `{run-dir}/claimed-did.json`.
+
+Pass `--customer-slug "$SLUG"` so the `claimed:<slug>` tag is human-meaningful (the script falls back to a timestamp slug if omitted).
 
 ### Output schema
 
@@ -485,9 +485,9 @@ If `{run-dir}/claimed-did.json` exists with a non-empty `did`, skip Stage 7 and 
 
 ## Stage 8 — TeXML app wiring
 
-**Goal:** verify the claimed DID is bound to the pool TeXML app, and audit the TeXML app's codec + status_callback.
+**Goal:** verify the claimed DID's TeXML app has the right codec / voice_method / status_callback / status_callback_method.
 
-> **Stage 8 verifies; it does not configure.** This stage assumes the operator has already followed [INSTALL.md §4.2 step 5](../../INSTALL.md#step-5--create--configure-each-texml-application) to create the TeXML app(s) with the right `voice_url`, codec, `status_callback`, and `status_callback_method`. If those values are missing or wrong, Stage 8 will halt with a diagnostic — but the fix lives in INSTALL.md, not here. See also INSTALL.md §4.2 step 4 for the per-DID-vs-shared TeXML app decision (which determines whether the script's PATCH at Stage 9 affects one customer or all of them).
+> **Stage 8 verifies; it does not configure.** This stage assumes the operator has already run [INSTALL.md §4.2 step 4](../../INSTALL.md#step-4--run-bulk-create-texml-appssh) (`bulk-create-texml-apps.sh`) to set up one TeXML app per DID with the right `voice_url`, codec, `status_callback`, and `status_callback_method`. If those values are missing or wrong, Stage 8 will halt with a diagnostic — re-run `bulk-create-texml-apps.sh`, which is idempotent.
 
 ### What to do
 
@@ -500,9 +500,9 @@ bash scripts/telnyx-wire-texml.sh \
 
 The script:
 
-1. GETs the phone_number, confirms `connection_id == $TELNYX_POOL_TEXML_APP_ID`. If not, PATCHes the DID to bind it. (This is a per-DID PATCH, not an Ultravox-style cardinal-rule violation — Telnyx PATCHes are idempotent.)
-2. GETs the TeXML app, confirms codec is in the known-good set (PCMU, PCMA, G722, OPUS, L16, G711U, G711A — 16 kHz preferred but G711 fallback acceptable). Codec mismatch is **WARN-only** because codec is pool-wide and an ops decision, not per-customer.
-3. Confirms the TeXML app's `status_callback` is a non-empty `http(s)://` URL. **Missing status_callback is a HARD FAIL** — without it, our call lifecycle webhooks don't fire and downstream attribution breaks.
+1. GETs the phone_number to discover its current `connection_id` (the TeXML app the DID is bound to — set up by `bulk-create-texml-apps.sh` at install time).
+2. GETs the TeXML app and confirms codec is in the known-good set (PCMU, PCMA, G722, OPUS, L16, G711U, G711A — OPUS preferred). Codec mismatch is **WARN-only** because codec is an ops decision.
+3. Confirms `voice_method`, `status_callback`, and `status_callback_method`. **Missing or malformed `status_callback` is a HARD FAIL** — without it, our call lifecycle webhooks don't fire and downstream attribution breaks.
 
 ### Output schema
 
@@ -562,7 +562,7 @@ The script:
 2. PATCHes that TeXML app's `voice_url` to `https://app.ultravox.ai/api/agents/{agent_id}/telephony_xml` and `voice_method` to `post`.
 3. GETs the TeXML app back and verifies the URL took.
 
-**Per-DID TeXML caveat:** in the simpler "shared pool TeXML app" model, every DID in the pool routes through one TeXML app — so the LAST claim wins, and previously-onboarded customers' DIDs would re-route to the new agent. The portable skill assumes the operator follows the per-DID-per-TeXML-app pattern (each pool DID has its own TeXML app row). If the operator runs a single shared pool TeXML app at >1 active customer, this stage will silently re-route earlier customers' calls — a known limitation surfaced in the design doc and called out here for visibility.
+Because every DID has its own dedicated TeXML app (set up by `bulk-create-texml-apps.sh`), this PATCH only ever affects the one customer being onboarded.
 
 ### Output schema
 
@@ -792,8 +792,8 @@ Every stage writes to `runs/{slug}-{ISO_TS}/state.json` on completion. Re-invoca
 | Ultravox POST rejected | 6 | Halt; dump request payload + response body. **No PATCH retry.** Operator fixes the input and re-runs Stage 6 (which POSTs a fresh agent). |
 | Telnyx pool < 3 DIDs | 7 | Claim succeeds, Resend `warn` alert fires, continue. |
 | Telnyx pool empty | 7 | Halt; Resend `crit` alert fires; state preserved. Operator buys DIDs in Telnyx console, then `/base-agent resume {slug}`. |
-| TeXML status_callback missing | 8 | Halt — pool-wide misconfiguration. Operator sets it in the Telnyx console, then resumes. |
-| TeXML codec mismatch | 8 | Warn-only, continue. Codec is pool-wide and an ops decision. |
+| TeXML status_callback missing | 8 | Halt — re-run `bulk-create-texml-apps.sh` (idempotent), then resume. |
+| TeXML codec mismatch | 8 | Warn-only, continue. Codec is an ops decision. |
 | Telephony PATCH didn't take | 9 | Halt; verification GET-back caught the discrepancy. Retry once or investigate Telnyx state. |
 | Discovery prompt too long (two-file path > 10K chars) | 10 | Halt; trim framing prose, never the methodology body. |
 | Vendor-name leak in discovery prompt or cover email | 10 | Halt; rewrite offending line; re-emit. |

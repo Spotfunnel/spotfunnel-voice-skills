@@ -119,10 +119,9 @@ DASHBOARD_SERVER_URL=
 
 ```
 REFERENCE_ULTRAVOX_AGENT_ID=
-TELNYX_POOL_TEXML_APP_ID=
 ```
 
-These point at specific entities you create in your Ultravox and Telnyx accounts (steps 4.1 and 4.2). The skills clone the reference Ultravox agent's voice/temperature/inactivity settings onto every new customer, and claim DIDs from the pool TeXML app.
+This points at the Ultravox agent you create in step 4.1 — the skills clone its voice/temperature/inactivity settings onto every new customer. There's no TeXML app ID to capture: pool TeXML apps are auto-discovered via tags at claim time (see step 4.2).
 
 ### 3.4 n8n + alerting
 
@@ -179,7 +178,7 @@ returns the voice and temperature you just configured. (Source `.env` first if y
 
 ### 4.2 Telnyx
 
-Telnyx provides the phone numbers (DIDs) and TeXML application(s) that bridge PSTN calls to Ultravox. **This subsection is the longest one in the install guide for a reason — TeXML wiring is the single most common source of silent failures (calls connect, but webhooks never fire, transcripts never reach Supabase, and there's no error message to chase).** Read every step.
+Telnyx provides the phone numbers (DIDs) and TeXML applications that bridge PSTN calls to Ultravox. The model is one TeXML app per DID — set up in bulk via a single script, no manual app-by-app clicking, no `TELNYX_POOL_TEXML_APP_ID` to copy.
 
 The end-to-end inbound chain you're building:
 
@@ -188,8 +187,6 @@ PSTN  →  Telnyx DID  →  TeXML app (voice_url)  →  Ultravox agent telephony
                                   ↓ (status_callback)
                           dashboard-server /webhooks/call-ended  →  Supabase calls row
 ```
-
-If any link in that chain is misconfigured, the symptom is usually "calls work but nothing shows up in the dashboard." That's what this section prevents.
 
 #### Step 1 — Account and API key
 
@@ -201,162 +198,64 @@ If any link in that chain is misconfigured, the symptom is usually "calls work b
 
 #### Step 2 — Buy DIDs
 
-Buy 3–5 DIDs (phone numbers) in your country/region. **Phone Numbers → Search & Buy Numbers**.
+Buy 3–5 DIDs in your country/region. **Phone Numbers → Search & Buy Numbers**.
 
 - The skill is Australia-defaulted in its examples (area codes 02/03/07/08), but works anywhere — pick whatever country code makes sense for your customer base.
 - Buy at least 3, ideally 5, to give the pool some buffer. The `/base-agent` skill claims one per customer and alerts you when the pool drops below 3.
-- **Note:** the skill never auto-purchases DIDs. You buy them manually in bulk; the skill only *claims* from the pool.
+- The skill never auto-purchases DIDs. You buy them manually in bulk; the skill only *claims* from the pool.
 
-#### Step 3 — Capture your dashboard-server URL
+#### Step 3 — Capture your Telnyx public key for webhook signing
 
-Before creating any TeXML apps, decide and write down your `DASHBOARD_SERVER_URL`. The TeXML apps you create in step 5 will need this URL on their `status_callback` field — it must be reachable from Telnyx's webhook senders, so localhost / private IPs won't work. If you don't have a dashboard-server deployed yet, see [section 7](#7-optional-deploy-dashboard-server) and circle back.
-
-> Throughout the rest of this section, anywhere you see `<your-dashboard-server-host>`, substitute the host portion of your `DASHBOARD_SERVER_URL` (e.g. `voiceaimachine-api-production.up.railway.app`).
-
-#### Step 4 — Decide the TeXML app model: per-DID or shared
-
-The skill (`telnyx-wire-texml.sh` + `wire-ultravox-telephony.sh`) supports two models. **Pick one and stick to it** — mixing the two will leak per-customer voice_url overwrites across DIDs and you'll spend hours debugging "why does customer A's number now route to customer B's agent?".
-
-**Per-DID app (recommended for production):** create one TeXML application per pool DID. Each customer's DID gets its own dedicated TeXML app, and `wire-ultravox-telephony.sh` PATCHes that specific app's `voice_url` at claim time without touching any other customer. This is what production VoiceAIMachine does.
-
-- Pros: customer isolation; no cross-tenant overwrites; safe to scale to N customers.
-- Cons: more TeXML apps to manage in the Telnyx console; `TELNYX_POOL_TEXML_APP_ID` in `.env` only holds one app ID, so you'll need to update it before each new claim **or** add an enhancement that scans your TeXML apps and picks the right one per claim.
-
-**Single shared app (acceptable for ≤1 active customer or local testing only):** one TeXML app for the whole pool. Every PATCH to `voice_url` overwrites the route for **every** DID bound to that app — last claim wins.
-
-- Pros: simplest setup; one app ID in `.env` and you're done.
-- Cons: **two or more concurrent customers will silently break each other's calls.** Every time you onboard a new customer, the previous customer's DID will silently start routing to the new customer's agent. **Do not use this in production with multiple customers.**
-
-The `wire-ultravox-telephony.sh` script header documents this limitation; `telnyx-claim-did.sh` papers over it with `claimed:*` resource tags but cannot prevent the underlying overwrite.
-
-> **Operator decision required:** if you're running this for >1 customer at a time, set up **per-DID apps** and either (a) update `TELNYX_POOL_TEXML_APP_ID` before each `/base-agent` run, or (b) treat the env var as "the app ID for the *next* claim" and rotate as you go.
-
-#### Step 5 — Create + configure each TeXML application
-
-For every TeXML application you create (one in the shared model, one per DID in the per-DID model), follow this exact configuration. Telnyx Portal → **Voice → TeXML Applications → Create TeXML Application**.
-
-- **Friendly name:** something memorable. Per-DID apps: include the DID, e.g. `voice-ai-+61731304231`. Shared: `voice-ai-pool` or `<your-org>-pool`.
-- **Voice URL:** initial placeholder — `https://app.ultravox.ai/api/agents/PLACEHOLDER/telephony_xml`. The skill rewires this per-customer at claim time, so the initial value just needs to be a syntactically valid URL.
-- **Voice Method:** `POST`.
-- **Codec preferences:** prefer **OPUS** (16 kHz, best quality) if your account supports it, falling back to **PCMU** (G.711 µ-law). The skill's `telnyx-wire-texml.sh` audits the codec and warns on unknown values but **does not auto-correct** — set this manually in the UI under TeXML Application → Settings → Codec preferences. Acceptable values per the audit logic: `OPUS`, `PCMU`, `PCMA`, `G722`, `L16`, `G711U`, `G711A`.
-- **Status Callback URL:** `https://<your-dashboard-server-host>/webhooks/call-ended`. **This is load-bearing.** Without it, calls land successfully but lifecycle events never reach your dashboard, transcripts never get written, and customers see an empty calls table. The skill treats a missing or malformed status_callback as a **HARD FAIL** in Stage 8.
-- **Status Callback Method:** `POST`.
-- **Status Callback Events:** at minimum subscribe to `call.ended`. Optional but recommended: `call.answered`, `call.machine.detected`, `call.recording.saved`. If the Telnyx UI presents a multi-select, tick all the call-lifecycle events; if it presents a single "send all events" checkbox, tick that.
-- **Outbound Voice Profile:** optional. Set only if you have one configured and need outbound calling from the agent (warm transfer uses a different code path — the agent's own DID — so this isn't required for transfers to work).
-
-Save the application. **Copy the TeXML application ID** from the URL or the app details panel — it's a numeric string like `2942921998587659757`.
-
-For the per-DID model, repeat this entire step for every DID you bought in step 2. For the shared model, you only do it once.
-
-Paste **one** TeXML app ID into `.env` (per the model decision above):
-```
-TELNYX_POOL_TEXML_APP_ID=2942921998587659757
-```
-
-#### Step 6 — Capture your Telnyx public key for webhook signing
-
-Telnyx signs every webhook it sends with **Ed25519**. Your dashboard-server must verify the `Telnyx-Signature-Ed25519-Signature` and `Telnyx-Signature-Ed25519-Timestamp` headers on incoming `/webhooks/call-ended` requests, otherwise it has no proof the webhook actually came from Telnyx. To verify, the dashboard-server needs your account's public key.
+Telnyx signs every webhook it sends with **Ed25519**. Your dashboard-server must verify the `Telnyx-Signature-Ed25519-Signature` and `Telnyx-Signature-Ed25519-Timestamp` headers on incoming `/webhooks/call-ended` requests, otherwise it has no proof the webhook actually came from Telnyx.
 
 1. Telnyx Portal → top-right **Account** menu → **Settings** (or directly: <https://portal.telnyx.com/#/app/account/public-key>).
-2. Locate the **Public Key** field. Copy the full value (a base64 string).
+2. Copy the **Public Key** value (a base64 string).
 3. Paste it into your **dashboard-server's** environment as `TELNYX_PUBLIC_KEY` (or whatever your dashboard-server expects — exact variable name lives in the dashboard-server repo, not here).
 
-> **This step is not configurable in this repo.** `TELNYX_PUBLIC_KEY` is consumed by your dashboard-server when verifying inbound webhooks; it does not appear in `.env.example` or in any skill script. But mention it here so you don't reach step 9 with broken signature verification and waste an hour debugging "why does Telnyx report 200 but the dashboard never sees the event?".
+> `TELNYX_PUBLIC_KEY` is consumed by your dashboard-server, not by these skills. It's listed in `.env.example` so you don't forget it when wiring up the dashboard-server side.
 
-If you skip this step, two things break:
-- Production dashboard-servers reject every Telnyx webhook with a 401 (signature mismatch) — symptom: calls happen, nothing lands in `calls`.
-- Lower-security dashboard-servers that skip verification accept everything — including spoofed webhooks from any source. Either way, capture the key.
+#### Step 4 — Run `bulk-create-texml-apps.sh`
 
-#### Step 7 — Bind DIDs to TeXML apps
-
-For each DID:
-
-- **Phone Numbers → My Numbers → click the DID → Voice tab → Connection** → set to **TeXML Application: `<your-app-name>`** → **Save**.
-
-Per-DID model: bind each DID to its own dedicated TeXML app from step 5.
-Shared model: bind every DID to the same TeXML app.
-
-If a DID is bound to a **different** TeXML app than `TELNYX_POOL_TEXML_APP_ID`, the `/base-agent` claim logic won't find it (Stage 7 filters on `connection_id == $TELNYX_POOL_TEXML_APP_ID`) and you'll see "pool exhausted" alerts despite having unclaimed numbers.
-
-#### Step 8 — Tag DIDs as available for the pool (optional but recommended)
-
-`telnyx-claim-did.sh` uses Telnyx **resource tags** on the DID to track assignment. The convention:
-
-- An **unassigned** DID has no `claimed:*` tag.
-- A **claimed** DID has a `claimed:<customer-slug>` tag added by the script (or by you, if you're claiming manually).
-
-Tagging unassigned DIDs with something like `pool:available` is **optional** (the script default treats "no `claimed:*` tag" as available regardless of other tags), but it's useful for auditability — you can filter the Telnyx **My Numbers** view to see at a glance which DIDs are pool-ready.
-
-How to tag, two options:
-
-- **Console:** Phone Numbers → My Numbers → click DID → Settings → **Tags** field → add `pool:available` → Save.
-- **API:** `PATCH /v2/phone_numbers/{id}` with body `{"tags": ["pool:available"]}`.
-
-Releasing a DID later (e.g. when offboarding a customer) means removing the `claimed:<slug>` tag — the next `/base-agent` run will pick it up again.
-
-#### Step 9 — Verification
-
-Run this verification block to confirm the wiring is correct end-to-end. Source `.env` first if you haven't (`set -a; source .env; set +a`).
+This one script does all the per-DID TeXML setup. From the repo root, with `.env` filled in (especially `DASHBOARD_SERVER_URL` and `TELNYX_API_KEY`):
 
 ```bash
-# 1. Confirm the TeXML app exists and is configured.
-echo "=== TeXML app config check ==="
-curl -sS -H "Authorization: Bearer $TELNYX_API_KEY" \
-  "https://api.telnyx.com/v2/texml_applications/$TELNYX_POOL_TEXML_APP_ID" \
-  | python3 -c "
-import json, sys
-d = json.load(sys.stdin).get('data') or {}
-voice_url = d.get('voice_url') or ''
-status_cb  = d.get('status_callback') or ''
-status_cb_method = d.get('status_callback_method') or ''
-inbound = d.get('inbound') or {}
-codecs = inbound.get('codecs') or []
+bash base-agent-setup/scripts/bulk-create-texml-apps.sh
+```
 
-ok = True
-def check(label, value, expected_truthy=True):
-    global ok
-    status = 'PASS' if (bool(value) == expected_truthy) else 'FAIL'
-    if status == 'FAIL': ok = False
-    print(f'  [{status}] {label}: {value!r}')
+For each DID in your account that doesn't already have a TeXML app bound, the script:
 
-print(f'  app: {d.get(\"friendly_name\")!r}')
-check('voice_url set', voice_url)
-check('status_callback set', status_cb)
-check('status_callback_method=POST', status_cb_method.lower() == 'post')
-check('codec(s) configured', codecs)
-print()
-print('OVERALL:', 'PASS' if ok else 'FAIL — fix the FAIL rows above before continuing')
-"
+- Creates a TeXML app named `pool-did-<normalized-e164>` (e.g. `pool-did-61731304231`).
+- Sets `voice_url` to a placeholder, `voice_method=POST`, codec preferences `[OPUS, PCMU]`, `anchorsite_override=Latency`, `status_callback=$DASHBOARD_SERVER_URL/webhooks/call-ended`, `status_callback_method=POST`, and `tags=["pool:available"]`.
+- Binds the DID to the new TeXML app and tags the DID with `pool:available`.
 
-# 2. List DIDs bound to that app + their claim state.
-echo
-echo "=== Pool DIDs bound to app $TELNYX_POOL_TEXML_APP_ID ==="
-curl -sS -G "https://api.telnyx.com/v2/phone_numbers" \
-  --data-urlencode "filter[connection_id]=$TELNYX_POOL_TEXML_APP_ID" \
-  --data-urlencode "page[size]=250" \
+The script is **idempotent** — DIDs already bound to a TeXML app are skipped with `[SKIP]`. Re-running after buying more DIDs is safe and only processes the new ones.
+
+To preview without making changes, add `--dry-run`. To target a subset, add `--dids +614...,+617...`.
+
+#### Step 5 — Verification
+
+Run this one-liner to confirm every DID has a `pool:available` TeXML app bound. Source `.env` first if you haven't (`set -a; source .env; set +a`).
+
+```bash
+echo "=== pool:available TeXML apps + bound DIDs ==="
+curl --ssl-no-revoke -sS -G "https://api.telnyx.com/v2/texml_applications" \
+  --data-urlencode "page[size]=100" \
   -H "Authorization: Bearer $TELNYX_API_KEY" \
   | python3 -c "
 import json, sys
-data = json.load(sys.stdin).get('data') or []
-if not data:
-    print('  [FAIL] zero DIDs bound to this TeXML app — buy DIDs and bind them (steps 2 + 7)')
-    sys.exit(0)
-claimed = [n for n in data if any((t or '').startswith('claimed:') for t in (n.get('tags') or []))]
-free = [n for n in data if n not in claimed]
-print(f'  {len(data)} bound | {len(free)} unassigned | {len(claimed)} claimed')
-for n in data:
-    tags = n.get('tags') or []
+apps = json.load(sys.stdin).get('data') or []
+pool = [a for a in apps if 'pool:available' in (a.get('tags') or [])]
+claimed = [a for a in pool if any((t or '').startswith('claimed:') for t in (a.get('tags') or []))]
+free = [a for a in pool if a not in claimed]
+print(f'  {len(pool)} pool TeXML apps | {len(free)} free | {len(claimed)} claimed')
+for a in pool:
+    tags = a.get('tags') or []
     state = 'CLAIMED' if any((t or '').startswith('claimed:') for t in tags) else 'free'
-    print(f'    {n.get(\"phone_number\")}  [{state}]  tags={tags}')
+    print(f'    {a.get(\"friendly_name\")}  [{state}]  app_id={a.get(\"id\")}  tags={tags}')
 "
 ```
 
-Expected output:
-
-- TeXML app config check: all rows `PASS`, OVERALL `PASS`.
-- Pool DIDs: at least 3 bound, all listed as `[free]` on a fresh install. If you see `[FAIL] zero DIDs bound`, you missed step 7 (binding DIDs to the app).
-
-If anything fails, fix the underlying step before moving on. **Do not** try to brute-force the skill past a TeXML misconfiguration — Stage 8 of `/base-agent` will catch it but with worse error messages than this verification block gives you.
+Expected output: at least 3 apps listed, all `[free]` on a fresh install. The count should match the number of DIDs you bought in step 2. If any DID is missing, re-run `bulk-create-texml-apps.sh` — it'll create the missing TeXML apps without re-creating existing ones.
 
 ### 4.3 Firecrawl
 
@@ -564,7 +463,6 @@ The fastest way to confirm everything's wired correctly is to start a Claude Cod
    ✅ SUPABASE_SERVICE_ROLE_KEY loaded
    ✅ DASHBOARD_SERVER_URL loaded
    ✅ REFERENCE_ULTRAVOX_AGENT_ID loaded
-   ✅ TELNYX_POOL_TEXML_APP_ID loaded
    ✅ N8N_BASE_URL loaded
    ✅ N8N_API_KEY loaded
    ✅ N8N_ERROR_REPORTER_WORKFLOW_ID loaded
@@ -690,9 +588,9 @@ You'll know the install is fully working when:
 
 **Causes & fixes:**
 
-- **Pool actually empty.** Buy more DIDs in the Telnyx portal, bind them to your TeXML app, re-run.
-- **DIDs exist but aren't bound to the TeXML app.** Telnyx DIDs claim to a TeXML app via Phone Numbers → click number → Voice tab → Connection. Unbound DIDs aren't visible to the skill's claim logic.
-- **DIDs are bound to a *different* TeXML app.** The skill only claims from `TELNYX_POOL_TEXML_APP_ID`. If you have multiple TeXML apps, double-check the ID in `.env` matches the one DIDs are bound to.
+- **Pool actually empty.** Buy more DIDs in the Telnyx portal, then re-run `bash base-agent-setup/scripts/bulk-create-texml-apps.sh` to create + bind TeXML apps for the new DIDs.
+- **DIDs were bought but `bulk-create-texml-apps.sh` was never run.** The claim logic looks for TeXML apps tagged `pool:available` — if you bought DIDs but skipped the bulk-create step, no TeXML apps will be tagged. Run the script.
+- **All `pool:available` apps are already tagged `claimed:*`.** Every claim adds a `claimed:<slug>` tag. Either you've claimed every DID, or stale `claimed:*` tags are sticking around. Inspect via the verification block in §4.2 step 5; remove `claimed:*` tags from apps you want to release.
 - **API key lacks number-management scope.** Telnyx API keys can have scoped permissions. Re-create the key with full account access if the issue persists.
 
 ### n8n calls fail with 401
