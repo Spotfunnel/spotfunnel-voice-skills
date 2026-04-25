@@ -141,9 +141,8 @@ call_template = {
     # selectedTools is ALWAYS [] regardless of reference. The rough agent
     # has no action tools — that's by design.
     "selectedTools": [],
-    # eventMessages stays empty — Leo wires call.ended manually in the UI
-    # per the design doc + onboard-customer skill notes.
-    "eventMessages": [],
+    # Note: eventMessages is no longer accepted by Ultravox MultistageCallTemplate
+    # — call.ended webhooks are wired in the Ultravox console post-create.
 }
 
 # Pull through fields if the reference provided them. Skip nulls so we
