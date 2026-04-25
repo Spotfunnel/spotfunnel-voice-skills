@@ -11,7 +11,8 @@ Together they collapse a multi-hour manual onboarding process into roughly 30 mi
 
 - **Claude Code** installed locally
 - A **Claude Max subscription** (or compatible plan) — the skills use Claude Opus 4.7 inline as their LLM brain
-- Accounts: **Ultravox**, **Telnyx**, **Firecrawl**, **Resend**, **Supabase**, **n8n**
+- Accounts: **Ultravox**, **Telnyx**, **Firecrawl**, **Resend**, **n8n**
+- **Supabase access** — either your own Supabase project, or credentials shared by an existing user who's onboarding you. The shared-project route skips the schema migration (it's already done in their project). See INSTALL.md §4.5 for both paths.
 - An existing Ultravox agent in your account that you'll use as the reference (its voice, temperature, and inactivity messages get copied onto every new customer)
 - A deployed `dashboard-server` (the service that receives Ultravox `call.ended` webhooks and writes to Supabase) — separate from this repo
 
@@ -21,7 +22,11 @@ Together they collapse a multi-hour manual onboarding process into roughly 30 mi
 git clone https://github.com/Spotfunnel/spotfunnel-voice-skills.git
 cd spotfunnel-voice-skills
 cp .env.example .env
-# Edit .env and fill in every value (see comments in the file)
+# Edit .env and fill in every value (see comments in the file).
+# Note: the Supabase values (SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY) can come
+# from your own Supabase project OR from an existing user sharing access with
+# you privately. If you're being onboarded by someone, just paste what they
+# send you and skip the schema migration in INSTALL.md §4.5 step 3.
 ```
 
 Then make the two skills discoverable by Claude Code. On Windows (Git Bash) using directory junctions:

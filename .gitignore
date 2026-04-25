@@ -23,3 +23,6 @@ __pycache__/
 
 # Temp dirs created by skill scripts
 .tmp-*/
+
+# (No exclusion for templates/example-agents — reference prompts are tracked
+# so collaborators inherit the same depth-and-structure inspiration.)

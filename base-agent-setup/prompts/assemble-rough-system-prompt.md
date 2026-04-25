@@ -12,10 +12,44 @@
 - `agent_first_name` — e.g. `Steve` (operator-supplied at Stage 1).
 - `templates/universal-rules.md` — exists in this repo. Read its full contents.
 - `{run-dir}/brain-doc.md` — produced at Stage 3. Read its full contents.
+- `templates/example-agents/*.prompt.md` — **optional**. If any such files exist, read them all (see "Optional enrichment pass" below).
 
 ## Output
 
 A single file at `{run-dir}/system-prompt.md` containing the four layers concatenated in the order below, separated by the literal section delimiters shown.
+
+---
+
+## Optional enrichment pass (run BEFORE concatenation)
+
+Before assembling the four-section output, scan for operator-supplied reference prompts:
+
+```bash
+ls templates/example-agents/*.prompt.md 2>/dev/null
+```
+
+**If no `*.prompt.md` files exist in that directory, skip this section entirely** and proceed straight to concatenation.
+
+**If one or more files exist**, run a single enrichment pass that does the following — and ONLY the following:
+
+1. Read every `*.prompt.md` file in `templates/example-agents/` in full.
+2. Catalogue the **behavioural pattern categories** present across those examples. Common categories to look for:
+   - Caller-scenario handling (sales vs support vs admin disambiguation, intent-unclear paths)
+   - Transfer phrasings + business-hours gating + fallback cascades on transfer failure
+   - Hold messages, on-call pacing cues, "let me check" phrasing
+   - Decline patterns ("I can't do that for you directly, but...")
+   - Empathy triggers and de-escalation language
+   - Pronunciation guides for brand/product names, currencies, dates, phone numbers
+   - Closing rituals (confirming next steps, sign-off, who hangs up first)
+   - Common-situation handlers (after-hours callers, frustrated callers, looping callers)
+3. Re-read `{run-dir}/brain-doc.md` and identify any pattern category that is **present in the brain-doc but underdeveloped** (i.e. the customer's situation clearly calls for it — they have transfer destinations, they have published hours, they have services priced differently, etc. — but the brain-doc currently captures it in one terse line where a richer treatment would be warranted).
+4. **Expand those underdeveloped sections inline within the brain-doc** — write the expanded brain-doc back to `{run-dir}/brain-doc.md`, overwriting it. Expansion is permitted only where:
+   - The brain-doc already has a sourced fact that supports the expansion (e.g. a transfer destination is listed → you may flesh out the brain-doc's "Notable from Meeting" or relevant heading with a 1–3 line richer description of how that transfer should be framed conversationally, drawing on patterns from the examples for the SHAPE).
+   - The expansion respects the brain-doc's source-flagging rules. Newly written prose carries `[inferred]` if it elaborates on what the source said; it carries the original tag if it merely re-expresses the source fact at greater length.
+5. **Hard rule: do NOT copy concrete facts from the example prompts into the brain-doc** — no phone numbers, staff names, addresses, prices, transfer destinations, vendor mentions, or business-specific rules from any example prompt may appear in the customer's brain-doc. The examples inform the SHAPE of the expanded prose; the customer's own sources supply every actual fact.
+6. Re-check the brain-doc against its own length and structure rules (3–8 KB target, soft cap 12 KB, all H2 headings present, source-flagging intact). If the enrichment pushed the brain-doc above 12 KB, trim the least essential expansions until it lands inside the band.
+
+When the enrichment pass is done — or when it's been skipped because no examples exist — proceed to concatenation below. **The four-section structure does not change either way.** The example-agents content is NEVER pasted directly into `system-prompt.md`; it only ever influences what gets written into `brain-doc.md` upstream of the concatenation.
 
 ---
 
@@ -78,5 +112,6 @@ Compute the total byte size of the assembled output before writing.
 2. All four delimiters present, in order, exactly once each.
 3. Total size is between 4 KB and 25 KB.
 4. No vendor or platform names leaked in (the brain-doc and universal-rules files are already vendor-clean by construction; this is just a sanity check).
+5. If the optional enrichment pass ran, the brain-doc on disk still satisfies its own size and structure rules (3–8 KB target, all H2 headings present, source tags intact, no concrete facts borrowed from `templates/example-agents/`). If it doesn't, re-trim the brain-doc and re-run this stage.
 
 Write to `{run-dir}/system-prompt.md` and stop.

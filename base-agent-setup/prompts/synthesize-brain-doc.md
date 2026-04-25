@@ -24,6 +24,29 @@ Both downstream consumers depend on the structure being stable and the source-fl
 
 ---
 
+## Optional enrichment input — operator's example agents
+
+Before extracting from the three primary sources, **scan `templates/example-agents/` for any `*.prompt.md` files**:
+
+```bash
+ls templates/example-agents/*.prompt.md 2>/dev/null
+```
+
+If one or more files exist, **read each one in full**. These are the operator's own well-tuned production receptionist prompts. They are present specifically so you can study what depth and behavioural richness a great agent prompt looks like in this operator's house style.
+
+Use them ONLY as **structural and depth inspiration** — i.e. they teach you:
+
+- Which categories of business context show up in tuned agents (caller scenarios, transfer logic, escalation rules, hold messages, fallback cascades, common-situation handlers, edge-case behaviour, pronunciation guides, knowledge-base depth).
+- How tone markers get expressed in a way the agent can actually act on (specific phrases, vocabulary cues, formality calibration, empathy triggers, do-not-say lists).
+- What level of *operational nuance* counts as worth capturing — versus marketing fluff worth ignoring.
+- How named staff, services, and policies are stated crisply versus padded.
+
+**Critical: do NOT copy any specific facts from the example prompts into the brain-doc you are about to write.** No phone numbers, addresses, staff names, business hours, prices, transfer rules, vendor mentions, or any other concrete data leaks from those examples into the customer brain-doc. The customer's brain-doc is sourced ONLY from the three inputs below (website + meeting + operator hints). The examples inform STRUCTURE and DEPTH, never content.
+
+If `templates/example-agents/` is empty or contains only the README, **skip this step entirely** and proceed with the three primary sources alone. The brain-doc still works without the enrichment input — it'll just lean on the universal extraction guidance below.
+
+---
+
 ## What to extract
 
 Pull out the following, from any of the three sources. Some fields will be present in all three; some in one; some in none.
@@ -204,5 +227,6 @@ Before you emit the brain-doc, run through this mental checklist:
 5. Total size is 3–8 KB. Not under 1 KB; not over 12 KB.
 6. No speculation, no marketing copy, no implementation detail, no commentary.
 7. Reads as an operational brief a downstream stage can grep, parse, and quote from.
+8. **No facts borrowed from `templates/example-agents/`.** If you read example prompts for inspiration, double-check that no phone number, staff name, address, price, transfer rule, or other concrete fact from any example accidentally appears in the brain-doc. Examples informed STRUCTURE and DEPTH only.
 
 Write the file to `{run-dir}/brain-doc.md` and stop.
