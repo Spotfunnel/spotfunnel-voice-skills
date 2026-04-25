@@ -91,9 +91,19 @@ Whether one-file or two-file, the discovery prompt itself (the part the customer
 
 ### 1. Framing line
 
-One sentence that tells ChatGPT what this conversation is and who it's talking to. Example shape:
+One sentence that tells ChatGPT what this conversation is and who it's talking to. **Path-specific shape:**
 
-> "You are about to interview {customer_first_name} from {customer_name} to produce a brief for the voice agent we're building for their business. Read everything below carefully before you respond."
+- **One-file path** — instruct ChatGPT to read the inline material below before responding:
+
+  > "You are about to interview {customer_first_name} from {customer_name} to produce a brief for the voice agent we're building for their business. Read everything below carefully before you respond."
+
+- **Two-file path** — keep the framing line strictly identity-only. Do **NOT** also tell ChatGPT to read the attached file here — that instruction belongs exclusively in element 2 (the methodology pointer). Issuing the read-the-attachment instruction twice (once in the framing line and again in the pointer line directly below it) is a regression that flags as redundancy in the customer-facing output.
+
+  > "You are about to interview {customer_first_name} from {customer_name} to produce a brief for the voice agent we're building for their business."
+
+  No "read the attached context file" addendum here on the two-file path. Element 2 owns that instruction.
+
+**Hard rule (two-file path):** the framing line is exactly one sentence and contains zero references to the attachment. Re-read your draft after writing — if the framing line and the line below it both say something like "read the attachment", strip the framing-line copy.
 
 ### 2. The methodology
 
@@ -230,5 +240,6 @@ Before you write either file, run this checklist:
 9. **Discovery-prompt size caps.**
    - One-file path: `discovery-prompt.md` is under 25,000 characters. If it isn't, the routing should have been two-file — re-route.
    - Two-file path: `discovery-prompt.md` is under 10,000 characters. Hard cap. If it isn't, your framing prose is too verbose or methodology has accidentally been inlined — strip until it fits. The methodology body must be in the attachment, not the prompt.
+10. **No "read the attachment" redundancy (two-file path).** On the two-file path, the instruction telling ChatGPT to read the attached context file appears **exactly once** — in element 2 (the methodology pointer line). It does **NOT** also appear in element 1 (the framing line). Mechanical check: count occurrences of any phrase like "read the attached context file", "read the attachment", "read the attached file", "read everything below … and the attached" inside `discovery-prompt.md`. If the count is greater than 1, strip the framing-line copy and keep the pointer-line copy. The framing line is identity-only on the two-file path.
 
 Write the files and stop. Stage 10 reports the path taken, the file sizes, and the absolute paths to the operator's terminal.
