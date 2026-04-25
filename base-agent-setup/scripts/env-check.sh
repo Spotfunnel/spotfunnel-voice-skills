@@ -76,7 +76,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 CACHE_FILE="$HOME/.config/spotfunnel-skills/env-path"
 
-if [ -n "$SPOTFUNNEL_SKILLS_ENV" ] && [ -f "$SPOTFUNNEL_SKILLS_ENV" ]; then
+if [ -n "${SPOTFUNNEL_SKILLS_ENV:-}" ] && [ -f "$SPOTFUNNEL_SKILLS_ENV" ]; then
   ENV_FILE="$SPOTFUNNEL_SKILLS_ENV"
 elif [ -f "$REPO_ROOT/.env" ]; then
   ENV_FILE="$REPO_ROOT/.env"
