@@ -58,7 +58,26 @@ Pull out the following, from any of the three sources. Some fields will be prese
 - **Staff** — list ONLY people who are likely transfer targets or named handoff destinations: partners, principals, special counsel, named heads of practice areas, the practice manager, and anyone the meeting transcript explicitly singles out. For each listed person capture **role + matter-area + direct contact only** — drop admission years, university degrees, prior-firm history, languages spoken (capture languages separately under Tone & Voice or as a single team-wide line if relevant), and any other biographical detail. One line per person, max. If the source lists more team members than fit this filter, add a single footnote line at the end of the section: `_Additional team: N more lawyers and support staff (not listed individually)._` Don't invent staff who aren't named anywhere.
 - **Contact** — existing public phone number(s), email(s), any other contact channel the business publicises.
 - **Policies & pricing** — explicit statements of policy, prices, guarantees, terms. Examples: "$145 initial consult", "no-obligation quotes", "30-day satisfaction guarantee", "we don't bulk-bill", "minimum callout fee $90". Only capture what the source explicitly states — don't infer prices.
-- **Tone & voice** — markers from the source copy: formal/casual, warm/efficient, humour cues, signature phrases ("g'day", "no worries", "looking after Brisbane families since 2008"). The agent's voice will be tuned from these later.
+- **Tone & voice** — markers from the source copy: formal/casual, warm/efficient, humour cues, signature phrases the **customer themselves** used (in their site copy or in the meeting) — e.g. "g'day", "no worries", "looking after Brisbane families since 2008". Capture these as **texture** — quoted brand phrases + register descriptors (formal/blunt/warm/etc.) — NOT as agent instructions. The agent's voice will be tuned from these at Stage 4 (PROCEDURES layer); the brain-doc just supplies the raw texture.
+
+  **Tone & Voice section — BANNED SUBSECTION HEADINGS.** The Tone & Voice section MUST NOT contain any of the following H3 subsections (or anything substantively equivalent under any other heading):
+  - `### Opening line` — what the agent says when the call connects
+  - `### Signature phrasings` — agent-side phrasings for confirmations, empathy, sign-offs, etc.
+  - `### Hold / "let me check" etiquette` — what the agent does while writing/thinking
+  - `### Frustration / empathy triggers` — how the agent recognises and responds to frustration
+  - `### Closing ritual` — how the agent ends a call
+  - `### Pronunciation guide` — how the agent pronounces initialisms, names, phone numbers
+  - `### Caller scenarios per service line` — per-service-line caller-handling playbooks
+  - `### Procedures` / `### Behavioural patterns` / `### Call flow` / `### Routing rules` — any agent-behaviour heading by any name
+
+  These are PROCEDURES content, generated at Stage 4 from the brain-doc + example-agents. They do **not** belong in the brain-doc. If you find yourself writing one of those subsection titles, stop and delete it — the content also goes (don't relocate it under a different heading).
+
+  **What the Tone & Voice section MAY contain:**
+  - One short paragraph describing the brand's register (e.g. "direct, blunt, Australian, partner-confident; rejects glossy-corporate; sentences are short").
+  - Direct quotes of signature brand phrases the **customer** uses on their site or in the meeting (e.g. _"We don't sugarcoat. We don't over-promise. We deliver."_). Quote them; don't transform them into agent instructions.
+  - Languages spoken across the team, if relevant.
+
+  Everything else — what the agent should say, when to escalate, how to handle frustration, what to say at the close, how to pronounce the firm's initialisms — is Stage 4's job, not Stage 3's.
 - **Notable from meeting** — anything material the customer said in the meeting that doesn't naturally fit the headings above. Examples: a problem they're trying to solve, a previous bad experience with another vendor, a commercial constraint, a stated preference, an unusual operating pattern. Keep this section grounded — only include things that would change how someone designs the agent.
 
   **No-meeting handling:** if the meeting-transcript input is the placeholder `[NO MEETING TRANSCRIPT — ...]` (operator-flagged forced-broad-scope or website-only run), the entire `## Notable from Meeting` section MUST contain ONLY the literal line `_(no meeting — see operator hints below if any)_` followed (optionally) by the operator-hints paragraph reproduced verbatim and tagged `[from operator hints]`. Do **not** populate this section with `[inferred]` operational nuances, transfer-routing speculation, urgency-detection guidance, "the agent should..." recommendations, or any other design-of-the-agent prose. Operational nuance and behavioural design belong in the Stage-4 enrichment pass (which writes back into other sections of the brain-doc with proper sourcing) — they do **not** belong in `## Notable from Meeting` synthesised at Stage 3 from a placeholder transcript.
@@ -127,9 +146,42 @@ If a section has nothing to capture from any source, write a single italicised l
 - **Do not write marketing copy.** This is an operational brief, not a brochure. "Acme Plumbing has been serving Brisbane since 1987 with unwavering dedication to quality" is wrong. "Founded 1987, family-owned, serves Brisbane metro [confirmed: site + meeting]" is right.
 - **Do not paraphrase the meeting transcript at length.** Pull out facts and tone markers; don't recap the conversation.
 - **Do not include opinions or recommendations.** No "the customer should consider...". The brain-doc is descriptive, not prescriptive.
-- **Do not infer operational nuances or design recommendations** into the brain-doc — no "the agent should...", no "transfer routing should consider...", no "urgency cues to detect...", no "natural close should be...". That entire register of advice is the Stage-4 enrichment pass's job, not Stage 3's. When in doubt, leave it out — Stage 4 will add it back, scoped and sourced, against the same brain-doc.
+- **Do not infer operational nuances or design recommendations** into the brain-doc — no "the agent should...", no "transfer routing should consider...", no "urgency cues to detect...", no "natural close should be...". That entire register of advice is the Stage-4 PROCEDURES pass's job, not Stage 3's. When in doubt, leave it out — Stage 4 will add it back, scoped and sourced, against the same brain-doc.
 - **Do not include any commentary about how the agent is built, what platform it runs on, or any backend implementation detail.** The brain-doc is purely about the customer's business.
 - **Do not include URLs from the scrape** (they're not useful downstream and they bloat the file).
+
+### The brain-doc is FACTS + TONE-AS-TEXTURE — never BEHAVIOUR
+
+State the rule positively, because it has been violated repeatedly: the brain-doc captures (a) **factual** information about the business (services, hours, staff, locations, contact, policies, prices) and (b) **tone-as-texture** — i.e. the customer's own brand voice expressed through quoted phrases the customer themselves used and short register descriptors (formal/blunt/warm/Australian/etc.). That is the entire scope.
+
+The brain-doc does **NOT** capture **behaviour** — i.e. what the agent should do. Behaviour means:
+
+- What the agent says when the call connects (opening line phrasings).
+- What the agent says to confirm a name/number/email (signature phrasings, readback rituals).
+- What the agent says to acknowledge frustration, distress, urgency.
+- What the agent says when a caller asks something out of scope.
+- What the agent says to close a call (sign-offs, closing rituals).
+- What the agent does while writing or thinking (hold etiquette, dead-air narration).
+- How the agent pronounces initialisms, phone numbers, surnames, addresses (pronunciation guide).
+- Per-service-line caller-handling playbooks ("Family law caller — typical intent is X, lead with empathy, route to Y").
+- Transfer-routing rules, urgency-detection cues, escalation logic, message-taking field lists.
+
+**All of the above belongs in PROCEDURES, generated at Stage 4 from this brain-doc + the example agents in `templates/example-agents/`.** None of it belongs in the brain-doc.
+
+### BANNED SUBSECTIONS — hard list
+
+The following H3 subsection titles (and any substantive equivalent under another title) MUST NOT appear anywhere in the brain-doc, including under `## Tone & Voice`, `## Services`, `## Policies & Pricing`, or any other H2:
+
+- `### Opening line`
+- `### Signature phrasings`
+- `### Hold / "let me check" etiquette` (or any "Hold etiquette", "dead air", "filler beats" variant)
+- `### Frustration / empathy triggers` (or "Empathy register", "Distressed callers", etc.)
+- `### Closing ritual` (or "Sign-off", "Wrap-up", "End-of-call")
+- `### Pronunciation guide` (or "Pronunciation", "Voice-only reading rules", "How to say…")
+- `### Caller scenarios per service line` (or "Caller intake", "Routing logic", "Per-service-line handling")
+- `### Procedures`, `### Behavioural patterns`, `### Call flows`, `### Routing rules`, `### Transfer logic`, `### Escalation rules`
+
+If you catch yourself writing one of these subsection titles — or a paragraph whose content matches one of them under a less obvious heading — stop and delete the entire block. Do not relocate it. Do not paraphrase it. Stage 4 will produce that content from scratch using the example agents as the structural model; the brain-doc would only pollute Stage 4 if it leaked behavioural prose.
 
 ---
 
@@ -231,5 +283,37 @@ Before you emit the brain-doc, run through this mental checklist:
 6. No speculation, no marketing copy, no implementation detail, no commentary.
 7. Reads as an operational brief a downstream stage can grep, parse, and quote from.
 8. **No facts borrowed from `templates/example-agents/`.** If you read example prompts for inspiration, double-check that no phone number, staff name, address, price, transfer rule, or other concrete fact from any example accidentally appears in the brain-doc. Examples informed STRUCTURE and DEPTH only.
+
+### Final integrity check — SELF-VALIDATION (run before write, abort on failure)
+
+Before you write the file, scan the draft you've composed against the BANNED SUBSECTIONS list. The check is mechanical:
+
+1. **Pattern scan.** Look for any line that starts with `### ` (H3 heading). For each H3 you find, check it against this banned-pattern list (case-insensitive, substring match, both literal and equivalent phrasings):
+
+   - `Opening line` / `Greeting` / `Call open` / `Salutation`
+   - `Signature phrasings` / `Signature phrases` / `Stock phrases` / `Phrasings`
+   - `Hold` (any variant — "Hold etiquette", "Hold / let me check", "Dead air", "Filler beats")
+   - `Frustration` / `Empathy triggers` / `Distress` / `Upset callers`
+   - `Closing ritual` / `Sign-off` / `Wrap-up` / `End of call` / `Call close`
+   - `Pronunciation` (any variant — "Pronunciation guide", "How to say", "Voice-only reading")
+   - `Caller scenarios` / `Caller intake` / `Routing` / `Transfer rules` / `Escalation rules`
+   - `Procedures` / `Behavioural patterns` / `Call flow` / `Behaviours`
+
+2. **Substantive scan.** Independently of headings, scan paragraphs for any passage that reads like an instruction to the agent. Trigger phrases include but aren't limited to:
+   - "The agent must…" / "The agent should…" / "The agent opens…" / "The agent closes…"
+   - "Said only once…" / "Said exactly once…" / "Use this phrasing…"
+   - "Do not say…" / "Never say…" (in the agent's mouth — different from "the firm does not deliver…", which is a fact)
+   - "When the caller is frustrated…" / "When the caller asks…" / "When the caller mentions…"
+   - "Spell out as letters…" / "Read X as Y…" / "Verbalise Y as Z…"
+   - "Confirm next steps…" / "Three beats…" / "Default route is…"
+   - Numbered step lists describing call-handling sequences ("1. Ask name. 2. Confirm. 3. Take a message.")
+
+3. **Abort condition.** If **either** scan finds a hit, the draft is polluted with behavioural content and you must NOT write it. Instead:
+   - Strip the offending H3 subsection(s) and any orphan agent-instruction prose.
+   - Re-check the remainder against the size target (3–8 KB) — the cleaned draft will be significantly smaller, and that's correct.
+   - Re-run the integrity check on the cleaned draft.
+   - Only when both scans return zero hits may you write the file.
+
+4. **Write only when clean.** A polluted brain-doc that survives this stage poisons Stage 4 (the system-prompt assembler concatenates the brain-doc verbatim into the final agent prompt) and Stage 10 (the discovery generator quotes from the brain-doc as ground truth). Both downstream stages assume the brain-doc is FACTS + TONE-AS-TEXTURE only. If the integrity check is uncertain, err on the side of stripping — Stage 4 will regenerate any genuinely useful behavioural content from the example agents.
 
 Write the file to `{run-dir}/brain-doc.md` and stop.
