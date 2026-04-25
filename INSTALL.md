@@ -1,8 +1,14 @@
 # INSTALL.md — first-time setup for spotfunnel-voice-skills
 
-This is the **detailed** install guide. If all you need is a refresher on a working machine, see [README.md](README.md). This document walks a brand-new operator through every account, key, command, and verification step required to make `/base-agent` and `/onboard-customer` work end-to-end.
+Two install paths live in this doc. Pick yours from the section right below, then follow the numbered sections in order.
 
-Read it top-to-bottom the first time. Estimated time: 60–90 minutes of clicking around vendor consoles, plus whatever it takes to deploy your dashboard-server (out of scope here).
+---
+
+## Which path is this?
+
+- **Path A — Joining an existing Spotfunnel-style operation (most readers).** A collaborator is sharing their business backend with you. They'll send you a complete `.env` privately — covering Telnyx, Ultravox, Supabase, n8n, Resend, Firecrawl. You do **not** create any vendor accounts, do **not** buy DIDs, do **not** run schema migrations, and do **not** run `bulk-create-texml-apps.sh`. Your collaborator already did all of that. Follow §1, §2, **§3**, then §5 → §6 → §7. Total time: ~5 minutes once your collaborator has the `.env` ready.
+
+- **Path B — Setting up your own copy from scratch.** You're forking the project and standing up your own Telnyx, Ultravox, Supabase, Firecrawl, Resend, and n8n. Follow §1, §2, then **§4** in full, then §5 → §6 → §7. Total time: 60–90 minutes of clicking around vendor consoles, plus whatever it takes to deploy your dashboard-server (out of scope here).
 
 ---
 
@@ -10,39 +16,44 @@ Read it top-to-bottom the first time. Estimated time: 60–90 minutes of clickin
 
 1. [Prerequisites](#1-prerequisites)
 2. [Clone the repo](#2-clone-the-repo)
-3. [Create `.env` from the template](#3-create-env-from-the-template)
-4. [Provision external accounts and capture IDs](#4-provision-external-accounts-and-capture-ids)
+3. [Quick install (shared backend) — Path A](#3-quick-install-shared-backend--path-a)
+4. [Provision your own backend — Path B](#4-provision-your-own-backend--path-b)
    - [4.1 Ultravox](#41-ultravox)
    - [4.2 Telnyx](#42-telnyx)
    - [4.3 Firecrawl](#43-firecrawl)
    - [4.4 Resend](#44-resend)
    - [4.5 Supabase](#45-supabase)
    - [4.6 n8n](#46-n8n)
-5. [Symlink / junction the skill folders into `~/.claude/skills/`](#5-symlink--junction-the-skill-folders-into-claudeskills)
-6. [Verify env preflight](#6-verify-env-preflight)
-7. [Optional: deploy dashboard-server](#7-optional-deploy-dashboard-server)
-8. [Test run](#8-test-run)
-9. [Troubleshooting](#9-troubleshooting)
+   - [4.7 Optional: deploy dashboard-server](#47-optional-deploy-dashboard-server)
+5. [Verify env preflight (both paths)](#5-verify-env-preflight-both-paths)
+6. [Test run (both paths)](#6-test-run-both-paths)
+7. [Troubleshooting (both paths)](#7-troubleshooting-both-paths)
 
 ---
 
 ## 1. Prerequisites
 
+Applies to both paths.
+
 You need:
 
 - **Claude Code** installed locally. Install instructions: <https://docs.anthropic.com/en/docs/claude-code>. The skills run inside a Claude Code session — there is no standalone CLI.
 - **A Claude Max subscription** (or higher). The skills use Claude Opus 4.7 inline as their LLM brain for brain-doc synthesis, prompt authoring, and discovery-prompt generation. **All AI inference uses your Claude Code subscription's quota — there is no separate Anthropic API key required.**
-- **Git Bash on Windows**, or any POSIX shell on macOS/Linux. The skills' bash blocks assume Unix-style paths and tools (`curl`, `python3`, `grep`, `git`). Native Windows `cmd.exe` and PowerShell are **not** supported as the skill shell — but you'll still use `cmd` once for directory junctions in step 5.
+- **Git Bash on Windows**, or any POSIX shell on macOS/Linux. The skills' bash blocks assume Unix-style paths and tools (`curl`, `python3`, `grep`, `git`). Native Windows `cmd.exe` and PowerShell are **not** supported as the skill shell — but you'll still use `cmd` once for directory junctions in §3 (Path A) or §5 (Path B).
 - **Python 3** on `PATH`. Used by the skills for safe JSON construction (`python3 -c "import json; ..."`). Verify with `python3 --version`.
-- **Accounts** at every vendor below. All have free tiers sufficient for development; production usage will require paid plans.
-  - [Ultravox](https://app.ultravox.ai/) — voice AI platform
-  - [Telnyx](https://portal.telnyx.com/) — phone numbers + TeXML
-  - [Firecrawl](https://www.firecrawl.dev/) — full-site web scraper
-  - [Resend](https://resend.com/) — transactional email
-  - [Supabase](https://supabase.com/) — your dashboard's Postgres + auth
-  - n8n — automation. Use [n8n Cloud](https://n8n.io/cloud/) or self-host.
 
-You **do not** need:
+**Vendor accounts** are only needed on Path B. On Path A your collaborator already owns all of them — you'll piggyback on their access via the `.env` they send you.
+
+If you're on Path B, you'll need accounts at every vendor below (all have free tiers sufficient for development; production usage will require paid plans):
+
+- [Ultravox](https://app.ultravox.ai/) — voice AI platform
+- [Telnyx](https://portal.telnyx.com/) — phone numbers + TeXML
+- [Firecrawl](https://www.firecrawl.dev/) — full-site web scraper
+- [Resend](https://resend.com/) — transactional email
+- [Supabase](https://supabase.com/) — your dashboard's Postgres + auth
+- n8n — automation. Use [n8n Cloud](https://n8n.io/cloud/) or self-host.
+
+You **do not** need (either path):
 
 - An Anthropic API key — Claude Code's subscription handles all inference.
 - An OpenAI key — analysis runs server-side on your dashboard-server using whatever model you've wired there; not the skills' concern.
@@ -51,6 +62,8 @@ You **do not** need:
 ---
 
 ## 2. Clone the repo
+
+Applies to both paths.
 
 Pick a stable parent directory you won't accidentally delete (e.g. `~/Code/`).
 
@@ -79,7 +92,83 @@ You'll know it worked when `ls` shows both `base-agent-setup/` and `onboard-cust
 
 ---
 
-## 3. Create `.env` from the template
+## 3. Quick install (shared backend) — Path A
+
+If you're on Path B (provisioning your own copy), skip ahead to [§4](#4-provision-your-own-backend--path-b).
+
+This is the fast path. Your collaborator owns every vendor account already; you're plugging into their setup.
+
+### 3.1 Get `.env` values from your collaborator privately
+
+They'll send you either a complete `.env` file or a list of `KEY=VALUE` lines covering every variable in `.env.example`. **Treat the credentials like passwords — don't paste them anywhere public.** Receive via DM, Signal, encrypted email, or a password manager share. Don't paste into Slack channels, GitHub issues, or anywhere with shared visibility.
+
+The list will include every key from `.env.example`: `ULTRAVOX_API_KEY`, `TELNYX_API_KEY`, `TELNYX_PUBLIC_KEY`, `FIRECRAWL_API_KEY`, `RESEND_API_KEY`, `RESEND_FROM_EMAIL`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `DASHBOARD_SERVER_URL`, `REFERENCE_ULTRAVOX_AGENT_ID`, `N8N_BASE_URL`, `N8N_API_KEY`, `N8N_ERROR_REPORTER_WORKFLOW_ID`, and `OPS_ALERT_EMAIL`.
+
+### 3.2 Save them as `.env` at the repo root
+
+```bash
+cp .env.example .env
+```
+
+Open `.env` in your editor and replace each blank value with what your collaborator sent. The `.env` file is gitignored — never commit it.
+
+`.env` syntax rules:
+
+- **No quotes around values.** Write `ULTRAVOX_API_KEY=uv_abc123`, not `ULTRAVOX_API_KEY="uv_abc123"`.
+- **No trailing whitespace** on any line. Trailing spaces become part of the value.
+- **No spaces around `=`.** `KEY=value`, not `KEY = value`.
+- **Comments start with `#`** and must be on their own line, not inline after a value.
+
+### 3.3 Junction the skills into `~/.claude/skills/`
+
+Claude Code discovers skills by scanning `~/.claude/skills/` at session startup. We don't copy the skill folders — we link them, so future `git pull`s take effect without re-copying.
+
+**Windows (Git Bash → cmd junctions).** `ln -s` from Git Bash typically fails on Windows without admin rights or developer mode. Use Windows directory junctions via `cmd` instead — they work without elevated privileges and Claude Code follows them transparently.
+
+```bash
+mkdir -p "$USERPROFILE/.claude/skills"
+
+# Replace USERNAME and the absolute path if your clone lives elsewhere
+cmd <<'EOF'
+mklink /J "C:\Users\USERNAME\.claude\skills\base-agent-setup" "C:\Users\USERNAME\Code\spotfunnel-voice-skills\base-agent-setup"
+mklink /J "C:\Users\USERNAME\.claude\skills\onboard-customer" "C:\Users\USERNAME\Code\spotfunnel-voice-skills\onboard-customer"
+EOF
+```
+
+Both should print `Junction created for ...`.
+
+**macOS / Linux (POSIX symlinks).**
+
+```bash
+mkdir -p ~/.claude/skills
+ln -s "$(pwd)/base-agent-setup" ~/.claude/skills/base-agent-setup
+ln -s "$(pwd)/onboard-customer" ~/.claude/skills/onboard-customer
+```
+
+Verify:
+
+```bash
+ls ~/.claude/skills/base-agent-setup/SKILL.md
+ls ~/.claude/skills/onboard-customer/SKILL.md
+```
+
+Both must resolve. If either is missing, the junction/symlink isn't pointing at the right place — recreate it.
+
+### 3.4 Open a fresh Claude Code session and run `/base-agent`
+
+Skill discovery runs at session startup, so close any existing Claude Code window and reopen it. Then jump to [§5](#5-verify-env-preflight-both-paths) — Stage 0 will green-tick every env var and confirm the install worked.
+
+That's the entire setup for Path A. ~5 minutes if your collaborator has the `.env` ready.
+
+---
+
+## 4. Provision your own backend — Path B
+
+If you're standing up your own copy of this stack from scratch, walk through every subsection below. If you're joining someone else's, you've already done §3 — skip ahead to [§5](#5-verify-env-preflight-both-paths).
+
+This is the canonical reference for forking the project: every vendor account, every key, every verification curl.
+
+### 4.0 Create `.env` from the template
 
 ```bash
 cp .env.example .env
@@ -87,66 +176,15 @@ cp .env.example .env
 
 The `.env` file is gitignored — never commit it. Every secret the skills need lives here, sourced once at Stage 0 of every skill invocation.
 
-Open `.env` in your editor. The file is grouped into four sections; you'll fill them in over the course of step 4 (creating accounts gives you the values). For now, just understand the layout:
+Open `.env` in your editor. The file is grouped into four sections; you'll fill them in over the course of §4.1–§4.6 (creating accounts gives you the values).
 
-### 3.1 Vendor APIs
-
-```
-ULTRAVOX_API_KEY=
-TELNYX_API_KEY=
-FIRECRAWL_API_KEY=
-RESEND_API_KEY=
-RESEND_FROM_EMAIL=
-```
-
-These are credentials for the five external services the skills call directly.
-
-### 3.2 Operator's backend
-
-```
-SUPABASE_URL=
-SUPABASE_SERVICE_ROLE_KEY=
-DASHBOARD_SERVER_URL=
-```
-
-`SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` come from your Supabase project (step 4.5).
-
-`DASHBOARD_SERVER_URL` is the public base URL of **your deployed `dashboard-server`** — the service that receives Ultravox `call.ended` webhooks, fetches transcripts, runs analysis, and writes rows into your Supabase. **This repo does not include the dashboard-server source.** If you don't have one deployed yet, see [section 7](#7-optional-deploy-dashboard-server).
-
-> Note: until you have a deployed dashboard-server, `/onboard-customer` will succeed up to the point of inserting workspace rows but the resulting customer experience will be incomplete — calls will hit Ultravox but never land in your Supabase. `/base-agent` itself doesn't depend on dashboard-server being live; it only needs the URL to write into the workspace's webhook field downstream.
-
-### 3.3 Reference assets
-
-```
-REFERENCE_ULTRAVOX_AGENT_ID=
-```
-
-This points at the Ultravox agent you create in step 4.1 — the skills clone its voice/temperature/inactivity settings onto every new customer. There's no TeXML app ID to capture: pool TeXML apps are auto-discovered via tags at claim time (see step 4.2).
-
-### 3.4 n8n + alerting
-
-```
-N8N_BASE_URL=
-N8N_API_KEY=
-N8N_ERROR_REPORTER_WORKFLOW_ID=
-OPS_ALERT_EMAIL=
-```
-
-n8n vars are required only for `/onboard-customer` Stage 7b (error-reporter wiring). `OPS_ALERT_EMAIL` is where pool-low and onboarding alerts get sent.
-
-### .env file rules
+`.env` syntax rules:
 
 - **No quotes around values.** Write `ULTRAVOX_API_KEY=uv_abc123`, not `ULTRAVOX_API_KEY="uv_abc123"`. Bash's `set -a; source .env; set +a` treats the literal text as the value, quotes included.
 - **No trailing whitespace** on any line. Trailing spaces become part of the value.
 - **No spaces around `=`.** `KEY=value`, not `KEY = value`.
 - **Comments start with `#`** and must be on their own line, not inline after a value.
 - **Multi-line values are not supported.** If a key needs a multi-line string, base64-encode it.
-
----
-
-## 4. Provision external accounts and capture IDs
-
-Work through each subsection in order. After each one, paste the captured values into the corresponding line of `.env`.
 
 ### 4.1 Ultravox
 
@@ -166,9 +204,8 @@ Ultravox is the voice AI platform that hosts each customer's agent.
    - Save the agent. **Copy its agent ID from the URL or the agent details panel** (a UUID like `4f5eab4b-a357-4995-a06d-d4a5e3dfb94a`).
 4. Paste the agent ID into `.env`:
    ```
-   REFERENCE_UL_TRAVOX_AGENT_ID=4f5eab4b-a357-4995-a06d-d4a5e3dfb94a
+   REFERENCE_ULTRAVOX_AGENT_ID=4f5eab4b-a357-4995-a06d-d4a5e3dfb94a
    ```
-   (Note the env var name is `REFERENCE_ULTRAVOX_AGENT_ID` — exactly as in `.env.example`.)
 
 You'll know it worked when:
 ```bash
@@ -311,26 +348,7 @@ returns a JSON body with an `id` field, and the test email lands in your inbox.
 
 Supabase hosts your dashboard's Postgres database (workspaces, users, calls, workflow_errors) and the auth subsystem.
 
-You have two ways to do this — pick the one that matches how you got here.
-
-#### Option A: use a shared Supabase project (recommended if someone is onboarding you)
-
-If an existing operator (a teammate, a friend, or whoever brought you into this stack) is sharing their Supabase project with you, **just paste the values they shared**:
-
-1. They will privately send you their `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`. Treat the message as confidential — these credentials grant full database access; treat them like passwords.
-2. Paste both values into your `.env`:
-   ```
-   SUPABASE_URL=https://<their-project-ref>.supabase.co
-   SUPABASE_SERVICE_ROLE_KEY=eyJhbGciOi...
-   ```
-3. **Skip the SQL migration in step 3 of Option B below — the schema is already there.** The shared project already has `workspaces`, `public.users`, `calls`, `workflow_errors`, etc. Your `/base-agent` and `/onboard-customer` runs will share that database with the existing operator's runs.
-4. **Auth is already configured** in the shared project; no action needed.
-
-That's all — jump straight to **section 4.6 (n8n)**.
-
-> **Why this is safe to share:** the service-role key bypasses Row Level Security, so a shared project means the people sharing the key see each other's workspaces, users, and calls. Only do this with someone you trust operationally. If that's a no-go, use Option B.
-
-#### Option B: provision your own Supabase project
+> If a collaborator is sharing their Supabase project with you, you're on **Path A** — go back to [§3](#3-quick-install-shared-backend--path-a) and follow it. The schema is already there, auth is already configured, you just paste the values they sent. The walkthrough below is for someone provisioning a brand-new project.
 
 1. **Create a project** at <https://supabase.com/dashboard>. Pick a region close to where your customers are. Choose a strong database password and save it somewhere — you won't need it for the skills, but you might need it for direct DB access later.
 2. **Capture URL and service-role key.** Project Settings → **API**.
@@ -341,7 +359,7 @@ That's all — jump straight to **section 4.6 (n8n)**.
    SUPABASE_SERVICE_ROLE_KEY=eyJhbGciOi...
    ```
    > **Treat the service-role key like a root password.** It bypasses Row Level Security. Never paste it into client-side code, public Slack channels, or commit it to git.
-3. **Run the SQL migration.** *(Only needed if you're provisioning a new project — Option A users skip this entirely; their project already has the schema.)* The skills assume a specific schema (`workspaces`, `public.users` mirroring `auth.users`, `calls`, `workflow_errors`, etc.).
+3. **Run the SQL migration.** The skills assume a specific schema (`workspaces`, `public.users` mirroring `auth.users`, `calls`, `workflow_errors`, etc.).
    - Open Supabase Studio → **SQL Editor → New query**.
    - Paste the contents of `schema/supabase-dashboard.sql` and run.
    - **Note:** as of this writing, `schema/supabase-dashboard.sql` is generated by Task 0.7 (separate from this install task). If the file doesn't exist in your clone yet, see `schema/supabase-dashboard.sql, generated separately` — it'll appear in a follow-up commit. In the meantime, your dashboard-server's own migrations or schema doc is the authoritative source for what tables `/onboard-customer` expects.
@@ -353,7 +371,7 @@ curl -sS "$SUPABASE_URL/rest/v1/workspaces?select=count" \
   -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
   -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY"
 ```
-returns either `[]` (empty table — fine for a freshly-provisioned Option B project) or a row count (Option A users sharing an existing project will see whatever workspaces are already there), with no auth errors.
+returns either `[]` (empty table — fine for a freshly-provisioned project) or a row count, with no auth errors.
 
 ### 4.6 n8n
 
@@ -384,40 +402,47 @@ curl -sS -H "X-N8N-API-KEY: $N8N_API_KEY" "$N8N_BASE_URL/api/v1/workflows/$N8N_E
 ```
 prints the reporter workflow's name and `active: True`.
 
----
+### 4.7 Optional: deploy dashboard-server
 
-## 5. Symlink / junction the skill folders into `~/.claude/skills/`
+`/onboard-customer` writes workspace rows that point at `$DASHBOARD_SERVER_URL/webhooks/call-ended`. Without a deployed dashboard-server, customer calls hit Ultravox successfully but never land in your Supabase — the dashboard will be empty.
 
-Claude Code discovers skills by scanning `~/.claude/skills/` at session startup. Each skill must be a directory (or symlink/junction to one) inside that folder, containing a `SKILL.md` at its root.
+**This repo does not include the dashboard-server source code.** Building it is out of scope here. The contract dashboard-server must satisfy:
 
-We **don't** copy the skill folders — we link them, so when you `git pull` updates to the repo they take effect without re-copying.
+- Accept POST at `/webhooks/call-ended` from Ultravox. Body shape per Ultravox's webhook docs.
+- On receipt: fetch the full transcript + audio from Ultravox using the call ID, run analysis (your choice of LLM), and INSERT into `calls` with `workspace_id` resolved by `SELECT id FROM workspaces WHERE ultravox_agent_ids @> ARRAY[$agentId]`.
+- Accept POST at `/webhooks/n8n-error` from your central n8n error-reporter. Auth via a shared `x-n8n-token` header. Body shape per `docs/runbooks/n8n-error-wiring.md`. Insert into `workflow_errors`.
+- Use `SUPABASE_SERVICE_ROLE_KEY` for writes (RLS-bypassing). Never expose this key to the browser.
+- Be reachable at a stable public URL — Railway, Render, Fly, Vercel-functions, or any Node host. Mark a `DASHBOARD_SERVER_URL` env on that deploy back into your skills' `.env`.
 
-### 5.1 Windows (Git Bash → cmd junctions)
+For the architecture rationale and full surface map, read [`base-agent-setup/docs/2026-04-25-design.md`](base-agent-setup/docs/2026-04-25-design.md) and [`onboard-customer/SKILL.md`](onboard-customer/SKILL.md) — they spell out every webhook, every column, and every failure mode.
 
-`ln -s` from Git Bash typically fails on Windows without admin rights or developer mode (the symlink either silently degrades to a copy or errors with "operation not permitted"). Use Windows directory junctions via `cmd` instead — they work without elevated privileges and Claude Code follows them transparently.
+If you don't have a dashboard-server yet, you can still:
 
-From Git Bash, in the cloned repo root:
+- Run `/base-agent` end-to-end. It creates Ultravox agents and claims DIDs without touching dashboard-server.
+- Test the rough agent by dialing the claimed DID — you'll hear it answer, knowledgeable about the customer's business.
+
+What you **can't** do without dashboard-server:
+
+- See calls in any kind of operational dashboard.
+- Have call summaries emailed.
+- Have analysis populate `outcome`/`intent`/`summary` columns.
+
+### 4.8 Junction the skill folders into `~/.claude/skills/`
+
+Same as §3.3 in Path A — Claude Code discovers skills by scanning `~/.claude/skills/` at session startup. Each skill must be a directory (or symlink/junction to one) inside that folder, containing a `SKILL.md` at its root.
+
+**Windows (Git Bash → cmd junctions).**
 
 ```bash
 mkdir -p "$USERPROFILE/.claude/skills"
 
-# Replace USERNAME and the absolute path if your clone lives elsewhere
 cmd <<'EOF'
 mklink /J "C:\Users\USERNAME\.claude\skills\base-agent-setup" "C:\Users\USERNAME\Code\spotfunnel-voice-skills\base-agent-setup"
 mklink /J "C:\Users\USERNAME\.claude\skills\onboard-customer" "C:\Users\USERNAME\Code\spotfunnel-voice-skills\onboard-customer"
 EOF
 ```
 
-Or, if you'd rather not edit the heredoc, run the two commands directly in a `cmd.exe` window:
-
-```cmd
-mklink /J "C:\Users\USERNAME\.claude\skills\base-agent-setup" "C:\Users\USERNAME\Code\spotfunnel-voice-skills\base-agent-setup"
-mklink /J "C:\Users\USERNAME\.claude\skills\onboard-customer" "C:\Users\USERNAME\Code\spotfunnel-voice-skills\onboard-customer"
-```
-
-Both should print `Junction created for ...`.
-
-### 5.2 macOS / Linux (POSIX symlinks)
+**macOS / Linux (POSIX symlinks).**
 
 ```bash
 mkdir -p ~/.claude/skills
@@ -425,13 +450,7 @@ ln -s "$(pwd)/base-agent-setup" ~/.claude/skills/base-agent-setup
 ln -s "$(pwd)/onboard-customer" ~/.claude/skills/onboard-customer
 ```
 
-### 5.3 Verify
-
-```bash
-ls -la ~/.claude/skills/
-```
-
-You should see entries for `base-agent-setup` and `onboard-customer`. On Linux/macOS they'll show `-> /path/to/repo/...` arrows; on Windows junctions look like normal directories but resolve correctly.
+Verify:
 
 ```bash
 ls ~/.claude/skills/base-agent-setup/SKILL.md
@@ -442,11 +461,11 @@ Both must resolve. If either is missing, the junction/symlink isn't pointing at 
 
 ---
 
-## 6. Verify env preflight
+## 5. Verify env preflight (both paths)
 
 The fastest way to confirm everything's wired correctly is to start a Claude Code session and run the skill — Stage 0 will preflight every required env var and halt with a specific error if anything is missing.
 
-1. **Open a fresh Claude Code session.** Skill discovery runs at session startup, so if you had Claude Code open before step 5, close and reopen it.
+1. **Open a fresh Claude Code session.** Skill discovery runs at session startup, so if you had Claude Code open before junctioning the skills, close and reopen it.
 2. From any directory (the skills are global):
    ```
    /base-agent
@@ -487,36 +506,11 @@ You can also do the same check with `/onboard-customer` — it has its own Stage
 
 ---
 
-## 7. Optional: deploy dashboard-server
-
-`/onboard-customer` writes workspace rows that point at `$DASHBOARD_SERVER_URL/webhooks/call-ended`. Without a deployed dashboard-server, customer calls hit Ultravox successfully but never land in your Supabase — the dashboard will be empty.
-
-**This repo does not include the dashboard-server source code.** Building it is out of scope here. The contract dashboard-server must satisfy:
-
-- Accept POST at `/webhooks/call-ended` from Ultravox. Body shape per Ultravox's webhook docs.
-- On receipt: fetch the full transcript + audio from Ultravox using the call ID, run analysis (your choice of LLM), and INSERT into `calls` with `workspace_id` resolved by `SELECT id FROM workspaces WHERE ultravox_agent_ids @> ARRAY[$agentId]`.
-- Accept POST at `/webhooks/n8n-error` from your central n8n error-reporter. Auth via a shared `x-n8n-token` header. Body shape per `docs/runbooks/n8n-error-wiring.md`. Insert into `workflow_errors`.
-- Use `SUPABASE_SERVICE_ROLE_KEY` for writes (RLS-bypassing). Never expose this key to the browser.
-- Be reachable at a stable public URL — Railway, Render, Fly, Vercel-functions, or any Node host. Mark a `DASHBOARD_SERVER_URL` env on that deploy back into your skills' `.env`.
-
-For the architecture rationale and full surface map, read [`base-agent-setup/docs/2026-04-25-design.md`](base-agent-setup/docs/2026-04-25-design.md) and [`onboard-customer/SKILL.md`](onboard-customer/SKILL.md) — they spell out every webhook, every column, and every failure mode.
-
-If you don't have a dashboard-server yet, you can still:
-
-- Run `/base-agent` end-to-end. It creates Ultravox agents and claims DIDs without touching dashboard-server.
-- Test the rough agent by dialing the claimed DID — you'll hear it answer, knowledgeable about the customer's business.
-
-What you **can't** do without dashboard-server:
-
-- See calls in any kind of operational dashboard.
-- Have call summaries emailed.
-- Have analysis populate `outcome`/`intent`/`summary` columns.
-
----
-
-## 8. Test run
+## 6. Test run (both paths)
 
 Before exposing real customer data to the pipeline, do one dry run against a fake customer.
+
+> **Path A note:** if you're sharing a backend with a collaborator, coordinate before doing a test run — your test workspace will land in their Supabase too. Use a clearly-fake customer name (e.g. `Test Customer Inc`) and clean up afterwards.
 
 1. Pick a fake customer — anything works as long as the website exists and is small. Suggestions:
    - `https://example.com` (smallest possible)
@@ -549,7 +543,7 @@ You'll know the install is fully working when:
 
 ---
 
-## 9. Troubleshooting
+## 7. Troubleshooting (both paths)
 
 ### Stage 0 reports a missing var
 
@@ -560,6 +554,7 @@ You'll know the install is fully working when:
 - **`.env` syntax error.** Check the offending line for: quotes around the value (remove them), trailing whitespace (trim it), spaces around `=` (remove them), inline comments (move them to their own line).
 - **Wrong env file resolved.** The resolver order is `$SPOTFUNNEL_SKILLS_ENV` → `<repo-root>/.env` → cached path at `~/.config/spotfunnel-skills/env-path`. If you have multiple clones or copies, an old one might be winning. `echo $SPOTFUNNEL_SKILLS_ENV` to check the override; `cat ~/.config/spotfunnel-skills/env-path` to check the cache. Delete the cache file if stale.
 - **Var name typo.** `.env` must use exactly the names from `.env.example`. `REFERENCE_UL_TRAVOX_AGENT_ID` (with extra underscore) won't match `REFERENCE_ULTRAVOX_AGENT_ID`. Compare side by side.
+- **Path A only — collaborator missed a key.** If your `.env` is missing a value entirely, ask your collaborator to send the missing one. Don't try to provision it yourself — that vendor account is theirs.
 
 ### Junction created but `ls ~/.claude/skills/` is empty
 
@@ -579,7 +574,7 @@ You'll know the install is fully working when:
 **Causes & fixes:**
 
 - **API key wrong or empty.** Check `.env` and verify `ULTRAVOX_API_KEY` is the full key from Ultravox console (Settings → API Keys), not truncated.
-- **API key revoked.** If you regenerated keys in the Ultravox console, the old one is dead. Use the new one and restart the Claude Code session.
+- **API key revoked.** If you regenerated keys in the Ultravox console, the old one is dead. Use the new one and restart the Claude Code session. (Path A: ask your collaborator for the new key — they own the account.)
 - **Account inactive / billing not added.** Ultravox sometimes rejects API calls with 401 when an account is past trial limits — log into the console and check for billing prompts. Add billing if so.
 
 ### Telnyx claim returns no DIDs
@@ -588,7 +583,7 @@ You'll know the install is fully working when:
 
 **Causes & fixes:**
 
-- **Pool actually empty.** Buy more DIDs in the Telnyx portal, then re-run `bash base-agent-setup/scripts/bulk-create-texml-apps.sh` to create + bind TeXML apps for the new DIDs.
+- **Pool actually empty.** Buy more DIDs in the Telnyx portal, then re-run `bash base-agent-setup/scripts/bulk-create-texml-apps.sh` to create + bind TeXML apps for the new DIDs. (Path A: tell your collaborator — they own the Telnyx account and need to buy + bulk-create.)
 - **DIDs were bought but `bulk-create-texml-apps.sh` was never run.** The claim logic looks for TeXML apps tagged `pool:available` — if you bought DIDs but skipped the bulk-create step, no TeXML apps will be tagged. Run the script.
 - **All `pool:available` apps are already tagged `claimed:*`.** Every claim adds a `claimed:<slug>` tag. Either you've claimed every DID, or stale `claimed:*` tags are sticking around. Inspect via the verification block in §4.2 step 5; remove `claimed:*` tags from apps you want to release.
 - **API key lacks number-management scope.** Telnyx API keys can have scoped permissions. Re-create the key with full account access if the issue persists.
@@ -643,7 +638,7 @@ You'll know the install is fully working when:
 **Causes & fixes:**
 
 - **`call.ended` webhook URL not set on the Ultravox agent.** This is a manual step (Stage 7 of `/onboard-customer` reminds you of it). The skill *cannot* set Ultravox webhooks via API — Ultravox PATCH wipes unrelated config. Open the agent in the Ultravox console → Integrations → Webhooks → set `call.ended` to `$DASHBOARD_SERVER_URL/webhooks/call-ended`. Save. Re-test.
-- **dashboard-server isn't deployed or its URL is wrong in `.env`.** See section 7. The webhook URL written into the workspace row is `$DASHBOARD_SERVER_URL/webhooks/call-ended` — if that URL doesn't resolve to a running service, Ultravox's webhook fires fail silently.
+- **dashboard-server isn't deployed or its URL is wrong in `.env`.** See §4.7. The webhook URL written into the workspace row is `$DASHBOARD_SERVER_URL/webhooks/call-ended` — if that URL doesn't resolve to a running service, Ultravox's webhook fires fail silently.
 - **`workflow_errors` row exists with `source = 'call-ended'`.** Check Supabase: `SELECT severity, message, payload FROM workflow_errors WHERE source = 'call-ended' ORDER BY created_at DESC LIMIT 5;`. The payload tells you exactly what went wrong (workspace not found, agent_id mismatch, etc.).
 
 ### Brain-doc synthesis returns generic / blank
@@ -662,8 +657,8 @@ You'll know the install is fully working when:
 If `/base-agent` runs all 11 stages green against a test customer and you can dial the claimed DID and have a coherent conversation, the install is complete. From here:
 
 - Read [`base-agent-setup/SKILL.md`](base-agent-setup/SKILL.md) and [`onboard-customer/SKILL.md`](onboard-customer/SKILL.md) to understand the per-customer flow you'll be running.
-- Tune your reference Ultravox agent over time — every change to its voice/temp/inactivity propagates to the next customer onboarded.
-- Customize `base-agent-setup/reference-docs/discovery-methodology.md` to match your preferred customer-discovery style.
-- Upgrade Firecrawl from free tier before serving paying customers.
+- (Path B only) Tune your reference Ultravox agent over time — every change to its voice/temp/inactivity propagates to the next customer onboarded.
+- (Path B only) Customize `base-agent-setup/reference-docs/discovery-methodology.md` to match your preferred customer-discovery style.
+- (Path B only) Upgrade Firecrawl from free tier before serving paying customers.
 
-When something breaks, your first stop is `workflow_errors` in Supabase — every surface that can fail at runtime routes there. Section 9 covers the most common failures, but the error payload is the source of truth for anything novel.
+When something breaks, your first stop is `workflow_errors` in Supabase — every surface that can fail at runtime routes there. §7 covers the most common failures, but the error payload is the source of truth for anything novel.

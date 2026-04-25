@@ -11,22 +11,27 @@ Together they collapse a multi-hour manual onboarding process into roughly 30 mi
 
 - **Claude Code** installed locally
 - A **Claude Max subscription** (or compatible plan) — the skills use Claude Opus 4.7 inline as their LLM brain
-- Accounts: **Ultravox**, **Telnyx**, **Firecrawl**, **Resend**, **n8n**
-- **Supabase access** — either your own Supabase project, or credentials shared by an existing user who's onboarding you. The shared-project route skips the schema migration (it's already done in their project). See INSTALL.md §4.5 for both paths.
-- An existing Ultravox agent in your account that you'll use as the reference (its voice, temperature, and inactivity messages get copied onto every new customer)
-- A deployed `dashboard-server` (the service that receives Ultravox `call.ended` webhooks and writes to Supabase) — separate from this repo
+- **Git Bash** on Windows or any POSIX shell on macOS/Linux
+- **Python 3** on `PATH`
+
+**Vendor accounts (Ultravox, Telnyx, Firecrawl, Resend, Supabase, n8n) are only required if you're standing up your own backend from scratch.** If a collaborator is onboarding you into their existing Spotfunnel-style operation, you piggyback on their accounts via the `.env` they send you — no signup needed on your side.
 
 ## Quick install
+
+There are two install paths. Pick yours:
+
+**Path A — joining an existing Spotfunnel-style operation.** A collaborator is sharing their business backend (Telnyx, Ultravox, Supabase, n8n, Resend, Firecrawl) with you. They'll send you a complete `.env` privately. Paste it in at the repo root, junction the two skills into `~/.claude/skills/`, open a fresh Claude Code session, and you're ready. ~5 minutes. See **[INSTALL.md §3](INSTALL.md#3-quick-install-shared-backend--path-a)** for details.
+
+**Path B — forking to build your own copy from scratch.** You're provisioning your own Telnyx, Ultravox, Supabase, etc. See **[INSTALL.md §4](INSTALL.md#4-provision-your-own-backend--path-b)** for the detailed walkthrough — every account, every key, every verification curl. ~60–90 minutes.
+
+Common skeleton for both paths:
 
 ```bash
 git clone https://github.com/Spotfunnel/spotfunnel-voice-skills.git
 cd spotfunnel-voice-skills
 cp .env.example .env
-# Edit .env and fill in every value (see comments in the file).
-# Note: the Supabase values (SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY) can come
-# from your own Supabase project OR from an existing user sharing access with
-# you privately. If you're being onboarded by someone, just paste what they
-# send you and skip the schema migration in INSTALL.md §4.5 step 3.
+# Path A: paste in the values your collaborator sent you privately.
+# Path B: see INSTALL.md §4 to provision each vendor account and capture keys.
 ```
 
 Then make the two skills discoverable by Claude Code. On Windows (Git Bash) using directory junctions:
@@ -47,7 +52,7 @@ ln -s "$(pwd)/onboard-customer" ~/.claude/skills/onboard-customer
 
 Open a fresh Claude Code session anywhere and run `/base-agent` to start.
 
-See **[INSTALL.md](INSTALL.md)** for the full step-by-step setup including Supabase schema migration, n8n error workflow setup, and Telnyx pool TeXML app creation.
+See **[INSTALL.md](INSTALL.md)** for the full step-by-step — including the shared-backend path, the from-scratch path, env preflight, the dry-run procedure, and troubleshooting.
 
 ## Layout
 
