@@ -140,9 +140,51 @@ Use exactly these H2 headings, in this order. Every heading appears in every bra
 ## Policies & Pricing
 ## Tone & Voice
 ## Notable from Meeting
+## Knowledge Gaps
 ```
 
 If a section has nothing to capture from any source, write a single italicised line under the heading: `_(no information)_`. Don't omit the heading. Downstream consumers expect every heading present so they can grep for them deterministically.
+
+### `## Knowledge Gaps` — mechanical, last section
+
+This section is a **numbered list of every coverage area the inputs couldn't fill**. The downstream Stage 10 discovery-prompt generator pulls these straight into the customer's to-do list. Don't editorialise; emit gap lines.
+
+**Procedure:**
+
+1. Walk the methodology coverage targets A–F (see `reference-docs/discovery-methodology.md`):
+   - **A.** Caller personas + per-persona dream call ending.
+   - **B.** Transfer targets (name + role + direct number + trigger) and after-hours / emergency-escalation policy.
+   - **C.** Active CRM, calendar, SMS, email, accounting, scheduling tools (specific products + versions) + per-integration dream behaviour.
+   - **D.** Voice/brand register, signature phrases, red-line topics, **humour-vs-seriousness register** (does the agent crack jokes when appropriate, or stay strictly professional?).
+   - **E.** Industry compliance, call-recording posture + jurisdictional disclosure, known failure modes today.
+   - **F.** Business hours, peak times, weekly call volume, agent operating hours (24/7 vs. business-hours vs. after-hours).
+2. Also walk the brain-doc's own H2 sections (`## Hours`, `## Staff` transfer-target detail, `## Policies & Pricing`, etc.). Any H2 that is `_(no information)_` or that has only sparse `[from site only]` entries where transfer-routing or operational detail is missing is a gap.
+3. For each gap, emit **one short imperative line** in `## Knowledge Gaps`. Cap each line at ~15 words. Format: short reason + `ASK.` or equivalent imperative.
+
+**Example shape:**
+
+```
+## Knowledge Gaps
+
+1. Business hours — site does not publish them. ASK.
+2. Specific transfer targets and direct numbers — only first names listed on team page. ASK.
+3. Pricing — not published. ASK.
+4. After-hours / emergency-escalation policy — not published. ASK.
+5. Active CRM, calendar, SMS tools — not mentioned anywhere. ASK.
+6. Per-integration dream behaviour — not in scope of any source. ASK.
+7. Humour-vs-seriousness register — site doesn't reveal this clearly. ASK.
+8. Call-recording posture — not stated. ASK.
+9. Known failure modes today — not stated. ASK.
+10. Call volume + peak times + agent operating hours — not stated. ASK.
+```
+
+**Hard rules:**
+
+- Numbered list, 1–N. Not a paragraph.
+- One imperative line per gap. ≤15 words.
+- No source tags inside this section — gaps are by definition unsourced.
+- Empty list only valid if every coverage target A–F is fully sourced from site or meeting; in that case write `_(no gaps — all coverage targets sourced from site or meeting)_`. This will be rare.
+- If the meeting transcript is the placeholder `[NO MEETING TRANSCRIPT — ...]`, almost every operational coverage target (B, C, parts of D, E, F) is by definition a gap. Emit them.
 
 ---
 
@@ -274,6 +316,11 @@ Below is the **skeleton** the output should follow. This is a structural example
 
 - [Material thing the customer said that doesn't fit elsewhere]
 - [Material thing the customer said that doesn't fit elsewhere]
+
+## Knowledge Gaps
+
+1. [Coverage area that isn't sourced from site or meeting] — [reason in <8 words]. ASK.
+2. [Coverage area that isn't sourced from site or meeting] — [reason in <8 words]. ASK.
 ```
 
 When a section is empty:
@@ -290,14 +337,15 @@ _(no information)_
 
 Before you emit the brain-doc, run through this mental checklist:
 
-1. Every H2 heading from the list above is present, in order.
+1. Every H2 heading from the list above is present, in order — including `## Knowledge Gaps` as the final section.
 2. Every fact has a source tag.
 3. Conflicts between site and meeting are flagged explicitly.
-4. Empty sections show `_(no information)_`, not omitted.
-5. Total size is 3–8 KB. Not under 1 KB; not over 12 KB.
-6. No speculation, no marketing copy, no implementation detail, no commentary.
-7. Reads as an operational brief a downstream stage can grep, parse, and quote from.
-8. **No facts borrowed from `templates/example-agents/`.** If you read example prompts for inspiration, double-check that no phone number, staff name, address, price, transfer rule, or other concrete fact from any example accidentally appears in the brain-doc. Examples informed STRUCTURE and DEPTH only.
+4. Empty sections show `_(no information)_`, not omitted. The exception is `## Knowledge Gaps`, which uses `_(no gaps — all coverage targets sourced from site or meeting)_` if truly empty.
+5. `## Knowledge Gaps` mechanically covers every methodology coverage target A–F that the inputs didn't fill. Numbered list, ≤15 words per item, ends imperatively (`ASK.`).
+6. Total size is 3–8 KB. Not under 1 KB; not over 12 KB.
+7. No speculation, no marketing copy, no implementation detail, no commentary.
+8. Reads as an operational brief a downstream stage can grep, parse, and quote from.
+9. **No facts borrowed from `templates/example-agents/`.** If you read example prompts for inspiration, double-check that no phone number, staff name, address, price, transfer rule, or other concrete fact from any example accidentally appears in the brain-doc. Examples informed STRUCTURE and DEPTH only.
 
 ### Final integrity check — SELF-VALIDATION (run before write, abort on failure)
 

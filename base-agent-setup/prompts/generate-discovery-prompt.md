@@ -173,6 +173,13 @@ Example shape (write yours similarly, customer-specific):
 
 Then a **numbered to-do list** of every coverage-target item from the methodology that is in scope but not yet answered. **This list IS the work.** Frame it as instructions to ChatGPT, not a topic survey.
 
+**Building the list — mechanical, in this order:**
+
+1. **First, paste in every item from the brain-doc's `## Knowledge Gaps` section.** That section is by construction the list of coverage areas the inputs couldn't fill. Each gap line maps one-to-one to a to-do item; carry the imperative phrasing across (e.g. `"Business hours — site does not publish them. ASK."` becomes `"Business hours — site does not publish them."`). Strip the trailing `ASK.` token if it makes the line awkward; the section's framing already conveys imperative intent.
+2. **Then add any in-scope methodology coverage items (A–F) that aren't already covered by a gap line.** These are usually the brain-engaging "dream behaviour" items the brain-doc can't ever source from a website (per-persona dream call ending, per-integration dream behaviour, etc.). Don't repeat anything the gap-derived lines already cover.
+3. **Always include this item if it isn't already on the list:** `Humour vs. seriousness register — should the agent crack jokes when appropriate, or stay strictly professional?` (Methodology §3D, voice texture decision the customer needs to make.)
+4. **Visually flag gap-derived items.** The gap-derived items go FIRST in the numbered list (they're the inputs-couldn't-fill items the customer must answer). Methodology-coverage items follow. Don't mark the boundary inside the list — the to-do list is one continuous numbered list — but the order matters because ChatGPT reads top-down.
+
 **Hard rules for this section:**
 
 - **Numbered list, 1–N.** Not a paragraph. Not semicolon-separated. Not "and... and... and..." run-ons.
@@ -193,9 +200,10 @@ Worked example of the shape (your contents will be customer-specific):
 > 5. Active CRM/calendar/SMS tools — specific products and versions.
 > 6. Per-integration dream behaviour — what writes where, when.
 > 7. Voice and red lines beyond the broad register on file.
-> 8. Call-recording posture and jurisdictional disclosure handling.
-> 9. Known failure modes today — what currently goes wrong on calls.
-> 10. Call volume and peak-time patterns.
+> 8. Humour vs. seriousness register — crack jokes when fitting, or strictly professional?
+> 9. Call-recording posture and jurisdictional disclosure handling.
+> 10. Known failure modes today — what currently goes wrong on calls.
+> 11. Call volume and peak-time patterns.
 >
 > **These are your tasks. Work through them. Don't skip any. The opener below is just your entry point — this list is the work.**"
 
@@ -354,7 +362,7 @@ Before you write either file, run this checklist:
    - One-file path: methodology body pasted verbatim into `discovery-prompt.md`, bracketed by the opening/closing methodology markers.
    - Two-file path: methodology body pasted verbatim into `customer-context.md` under a `# Methodology` heading at the top of that file. `discovery-prompt.md` contains a one-line pointer to the attachment, NOT the methodology body.
 3. **Bespoke opener is punchy.** **Hard cap ~40 words / 1–2 sentences.** Anchored in ONE concrete customer specific (a quoted phrase, a single named service, the published phone number — pick ONE most distinctive). Ends with a direct question the customer can answer mentally in one second. **Mechanical check:** count words in your opener — if it's over 40, cut. Count question marks — if more than one, you have compound questions; rewrite. Grep the opener for any banned phrase: "throughline", "anchor scope", "anchor the scope", "before we go anywhere near", "land in the middle", "we'll work outward from there", "I want to anchor", "Tell me:" preamble, "let me reflect that back", "let me anchor", "before I dig in", "before we dig in". Match count must be zero.
-4. **Known map + numbered to-do list present and visually punchy.** The "Already settled" sub-section is a short paragraph or compact bullet list. The **`Your job — get clear on these with [Customer]`** sub-section is a **numbered list (1–N), one short line per item, no semicolons, no run-ons**. Every item is **≤15 words**. The closing instruction line **`These are your tasks. Work through them. Don't skip any. The opener below is just your entry point — this list is the work.`** is present in bold below the list. **Mechanical check:** verify the to-do section renders as numbered items, not a paragraph. Verify each line is ≤15 words. Verify zero semicolons inside any item.
+4. **Known map + numbered to-do list present and visually punchy.** The "Already settled" sub-section is a short paragraph or compact bullet list. The **`Your job — get clear on these with [Customer]`** sub-section is a **numbered list (1–N), one short line per item, no semicolons, no run-ons**. Every item is **≤15 words**. The closing instruction line **`These are your tasks. Work through them. Don't skip any. The opener below is just your entry point — this list is the work.`** is present in bold below the list. **Mechanical check:** verify the to-do section renders as numbered items, not a paragraph. Verify each line is ≤15 words. Verify zero semicolons inside any item. **Mechanical check (gap propagation):** read the brain-doc's `## Knowledge Gaps` section. Every numbered item there must appear (in spirit, condensed if needed) in the to-do list. If a gap line is missing, the to-do list is incomplete — re-build per element 4b. **Mechanical check (humour/seriousness):** the to-do list must contain a humour-vs-seriousness item — grep for the substring `Humour` or `humour` — at least one match required.
 5. **No vendor names** in either output file. No model names. No infrastructure names. No internal codenames.
 6. **Cover email substitutions all resolved.** No literal `{customer_first_name}`, `{operator_first_name}`, `{{DISCOVERY_PROMPT}}`, or `{{CUSTOMER_CONTEXT_FILE_PATH}}` left in the email.
 7. **Two-file path only:** `customer-context.md` exists at `{run-dir}/customer-context.md`, contains methodology (first) + brain-doc + transcript + operator hints with brief framing headings, and is referenced by absolute path in the cover email.
