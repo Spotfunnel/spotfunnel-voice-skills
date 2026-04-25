@@ -155,7 +155,7 @@ This section is a **numbered list of every coverage area the inputs couldn't fil
 1. Walk the methodology coverage targets A–F (see `reference-docs/discovery-methodology.md`):
    - **A.** Caller personas + per-persona dream call ending.
    - **B.** Transfer targets (name + role + direct number + trigger) and after-hours / emergency-escalation policy.
-   - **C.** Active CRM, calendar, SMS, email, accounting, scheduling tools (specific products + versions) + per-integration dream behaviour.
+   - **C.** Software stack — every tool the business uses that the agent could meaningfully interact with (CRM, calendar, project management, ticketing, scheduling, e-commerce, file storage, accounting, SMS, email, internal backends, payments, etc., with specific products + versions) + per-integration dream behaviour.
    - **D.** Voice/brand register, signature phrases, red-line topics, **humour-vs-seriousness register** (does the agent crack jokes when appropriate, or stay strictly professional?).
    - **E.** Industry compliance, call-recording posture + jurisdictional disclosure, known failure modes today.
    - **F.** Business hours, peak times, weekly call volume, agent operating hours (24/7 vs. business-hours vs. after-hours).
@@ -171,7 +171,7 @@ This section is a **numbered list of every coverage area the inputs couldn't fil
 2. Specific transfer targets and direct numbers — only first names listed on team page. ASK.
 3. Pricing — not published. ASK.
 4. After-hours / emergency-escalation policy — not published. ASK.
-5. Active CRM, calendar, SMS tools — not mentioned anywhere. ASK.
+5. Software stack — what tools the business uses (any the agent could meaningfully interact with) — not mentioned anywhere. ASK.
 6. Per-integration dream behaviour — not in scope of any source. ASK.
 7. Humour-vs-seriousness register — site doesn't reveal this clearly. ASK.
 8. Call-recording posture — not stated. ASK.

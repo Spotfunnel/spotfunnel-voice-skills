@@ -193,11 +193,11 @@ Worked example of the shape (your contents will be customer-specific):
 
 > "**Your job — get clear on these with Sarah:**
 >
-> 1. Caller personas in practice — who actually rings the line.
-> 2. Per-persona dream call ending — what each caller leaves with.
-> 3. Transfer rules — name, role, direct number, trigger per target.
-> 4. After-hours and emergency-escalation policy.
-> 5. Active CRM/calendar/SMS tools — specific products and versions.
+> 1. Transfer rules — name, role, direct number, trigger per target.
+> 2. After-hours and emergency-escalation policy.
+> 3. Software stack — what tools does the business use, especially anything the agent could meaningfully interact with? Specific products and versions.
+> 4. Caller personas in practice — who actually rings the line.
+> 5. Per-persona dream call ending — what each caller leaves with.
 > 6. Per-integration dream behaviour — what writes where, when.
 > 7. Voice and red lines beyond the broad register on file.
 > 8. Humour vs. seriousness register — crack jokes when fitting, or strictly professional?
@@ -206,6 +206,8 @@ Worked example of the shape (your contents will be customer-specific):
 > 11. Call volume and peak-time patterns.
 >
 > **These are your tasks. Work through them. Don't skip any. The opener below is just your entry point — this list is the work.**"
+
+**Ordering rule.** The software-stack item lands BEFORE the persona/dream-call items. Knowing what software exists lets the customer answer persona/outcome questions concretely ("leads land in our CRM, calendar invites go in Google Calendar") rather than in a software-vacuum. If you find yourself ordering personas before software, re-order.
 
 This section enforces the methodology's "never re-ask" principle (principle 2) by making the already-answered items explicit up front, AND it enforces the methodology's coverage targets (§3 A–F) by making the still-open items a literal numbered to-do list ChatGPT can tick through.
 
