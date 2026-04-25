@@ -15,12 +15,12 @@
 #   <out-dir>/combined.md                  flattened concatenation
 #
 # Firecrawl API endpoint version assumption:
-#   This script uses the v1 async crawl endpoints, current as of mid-2025:
-#     POST https://api.firecrawl.dev/v1/crawl       → returns {id, url}
-#     GET  https://api.firecrawl.dev/v1/crawl/{id}  → polls; on completion
+#   This script uses the v2 async crawl endpoints (Firecrawl moved v1 → v2):
+#     POST https://api.firecrawl.dev/v2/crawl       → returns {success, id, url}
+#     GET  https://api.firecrawl.dev/v2/crawl/{id}  → polls; on completion
 #                                                     returns {status:"completed", data:[...]}
-#   If Firecrawl bumps to v2 or changes the response shape, update the two
-#   curl URLs below and the Python parser at the bottom.
+#   If Firecrawl bumps versions again or changes the response shape, update
+#   the two curl URLs below and the Python parser at the bottom.
 #
 # Conventions: ASCII markers [OK] / [ERR] / [INFO]; Python3 for JSON; never
 # writes outside --out-dir.
@@ -96,15 +96,15 @@ mkdir -p "$OUT_DIR/pages"
 
 echo "[INFO] kicking off Firecrawl crawl for $URL (max-pages=$MAX_PAGES)"
 
-# Build the kickoff payload. respectRobots:false matches the implementation
-# plan; limit caps page count.
+# Build the kickoff payload. limit caps page count. (Firecrawl v2 dropped
+# the respectRobots field — robots.txt is honoured by default; use
+# ignoreRobotsTxt:true if you ever need to override.)
 KICKOFF_PAYLOAD="$(python3 - "$URL" "$MAX_PAGES" <<'PY'
 import json, sys
 url, max_pages = sys.argv[1], int(sys.argv[2])
 print(json.dumps({
     "url": url,
     "limit": max_pages,
-    "respectRobots": False,
     "scrapeOptions": {"formats": ["markdown"]},
 }))
 PY
@@ -114,7 +114,7 @@ KICKOFF_RAW="$(mktemp)"
 trap 'rm -f "$KICKOFF_RAW"' EXIT
 
 HTTP_CODE="$(curl --ssl-no-revoke -sS -o "$KICKOFF_RAW" -w "%{http_code}" \
-  -X POST "https://api.firecrawl.dev/v1/crawl" \
+  -X POST "https://api.firecrawl.dev/v2/crawl" \
   -H "Authorization: Bearer $FIRECRAWL_API_KEY" \
   -H "Content-Type: application/json" \
   -d "$KICKOFF_PAYLOAD")"
@@ -130,7 +130,7 @@ JOB_ID="$(python3 - "$KICKOFF_RAW" <<'PY'
 import json, sys
 with open(sys.argv[1], "r", encoding="utf-8") as f:
     data = json.load(f)
-# v1 returns {"success": true, "id": "...", "url": "..."} on kickoff.
+# v2 returns {"success": true, "id": "...", "url": "..."} on kickoff.
 print(data.get("id") or data.get("jobId") or "")
 PY
 )"
@@ -154,7 +154,7 @@ STATUS=""
 while [ "$POLL" -lt "$MAX_POLLS" ]; do
   POLL=$((POLL + 1))
   HTTP_CODE="$(curl --ssl-no-revoke -sS -o "$POLL_RAW" -w "%{http_code}" \
-    -X GET "https://api.firecrawl.dev/v1/crawl/$JOB_ID" \
+    -X GET "https://api.firecrawl.dev/v2/crawl/$JOB_ID" \
     -H "Authorization: Bearer $FIRECRAWL_API_KEY")"
 
   if [ "$HTTP_CODE" -ge 400 ]; then
