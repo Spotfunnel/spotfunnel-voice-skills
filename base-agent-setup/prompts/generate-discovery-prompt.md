@@ -28,7 +28,7 @@ Two files. Both go in `{run-dir}/`:
 
 When the two-file path triggers (see Sizing logic), there is also a third output:
 
-3. **`customer-context.md`** — brain-doc + meeting transcript packaged as an attachment. The cover email points at it.
+3. **`customer-context.md`** — methodology (verbatim) + brain-doc + meeting transcript + operator hints packaged as an attachment. The cover email points at it. On the two-file path the methodology lives here, NOT in `discovery-prompt.md`.
 
 ---
 
@@ -64,14 +64,18 @@ Round to nearest 500 chars.
 ### Step 2 — route
 
 - **Combined size ≤ 25,000 characters → ONE-FILE PATH.**
-  Emit a single `discovery-prompt.md` that contains everything: methodology + bespoke opener + brain-doc summary + transcript + operator hints + output schema. The customer pastes it once into ChatGPT and the conversation begins.
+  Emit a single `discovery-prompt.md` that contains everything: methodology + bespoke opener + brain-doc summary + transcript + operator hints + output schema. The customer pastes it once into ChatGPT and the conversation begins. **Hard cap on `discovery-prompt.md` in single-file mode: 25,000 characters.**
 
 - **Combined size > 25,000 characters → TWO-FILE PATH.**
+  In two-file mode the methodology body is **too large to live inline** — it has to move into the attached context file alongside the per-customer ground truth. Otherwise the discovery-prompt itself blows past any reasonable paste cap.
+
   Emit two files:
-  - `discovery-prompt.md` — methodology + bespoke opener + scope statement + a short instruction that says *"a context file with our meeting and your business summary is attached to this message; treat it as ground truth and don't re-ask anything covered in it."* This file must come in **under 10,000 characters** so the customer can paste it cleanly even on a free tier.
-  - `customer-context.md` — brain-doc body + meeting transcript verbatim + operator hints, with brief framing headings (`# Business summary`, `# Meeting transcript`, `# Operator notes`). No methodology, no opener — just the context.
+  - `discovery-prompt.md` — short, paste-friendly. Contents: framing line + bespoke opener (one question only — see element 4 below) + scope statement + known-vs-unknown map + output-schema reminder + a one-line pointer telling ChatGPT to read the methodology and per-customer context in the attached file. **NO methodology body inline. NO transcript inline. NO brain-doc inline.** This file must come in **under 10,000 characters**, hard cap.
+  - `customer-context.md` — methodology body (verbatim) + brain-doc body + meeting transcript verbatim + operator hints, with brief framing headings: `# Methodology` (the verbatim discovery-methodology body), `# Business summary` (brain-doc), `# Meeting transcript`, `# Operator notes`. Methodology comes first in this file because ChatGPT needs to ingest it before it does anything else with the per-customer context.
 
   The customer pastes `discovery-prompt.md` as their first message and drag-drops `customer-context.md` as an attachment to that same message.
+
+**Routing rule, stated explicitly:** if methodology + brain-doc + transcript + operator hints + framing prose ≤ 25K total → single-file (methodology stays inline). Else → two-file with methodology in the attachment. The methodology never lives inline in `discovery-prompt.md` on the two-file path.
 
 The cover email handles both paths automatically — it tells the customer "if you see two parts below, paste the prompt and attach the context file."
 
@@ -93,7 +97,7 @@ One sentence that tells ChatGPT what this conversation is and who it's talking t
 
 ### 2. The methodology
 
-Paste the full body of `base-agent-setup/reference-docs/discovery-methodology.md` verbatim. Do not edit, summarise, reorder, or strip sections. Bracket the methodology content with a clear opening line and closing line so ChatGPT can parse it as one block:
+**One-file path:** paste the full body of `base-agent-setup/reference-docs/discovery-methodology.md` verbatim into `discovery-prompt.md`. Do not edit, summarise, reorder, or strip sections. Bracket the methodology content with a clear opening line and closing line so ChatGPT can parse it as one block:
 
 > "**The methodology you must follow is below. Read it in full before you ask the customer anything.**"
 >
@@ -101,7 +105,11 @@ Paste the full body of `base-agent-setup/reference-docs/discovery-methodology.md
 >
 > "**End of methodology. Below this line is the per-customer context for this specific interview.**"
 
-In the **two-file path**, this block stays in `discovery-prompt.md` — the methodology always travels with the prompt, never with the attachment. The methodology is what makes the conversation work; without it the attachment is just data.
+**Two-file path:** the methodology body does **not** appear inline in `discovery-prompt.md`. It moves to the attached `customer-context.md` (under a `# Methodology` heading at the top of that file). In `discovery-prompt.md` itself, replace the inline methodology block with a single pointer line:
+
+> "**Before you respond, read the attached context file in full. The first section is the methodology you must follow for this interview — it is non-negotiable. The remaining sections are the per-customer ground truth (business summary, our meeting, operator notes). Treat all of it as ground truth and do not re-ask anything covered in it.**"
+
+This pointer is the only methodology-related content in `discovery-prompt.md` on the two-file path. The methodology body lives once, in the attachment, never duplicated inline. This is what keeps `discovery-prompt.md` under its 10K cap.
 
 ### 3. Per-customer ground truth (one-file path) OR pointer to context file (two-file path)
 
@@ -121,13 +129,13 @@ In the **two-file path**, this block stays in `discovery-prompt.md` — the meth
 >
 > [...operator hints paragraph...]"
 
-**Two-file path:** replace the inline content with a pointer:
+**Two-file path:** the inline brain-doc + transcript + hints content does NOT appear here either — it's all in the attachment, after the methodology section. The pointer-line you wrote at element 2 already covers this; you don't duplicate it. Move on to element 4 (the bespoke opener).
 
-> "**A context file is attached to this message containing the business summary, our meeting transcript, and operator notes. Read it in full before you respond. Treat it as ground truth — do not re-ask anything covered in it.**"
-
-### 4. The bespoke first question — REQUIRED, NOT OPTIONAL
+### 4. The bespoke first question — REQUIRED, NOT OPTIONAL — exactly ONE question
 
 This is the single highest-value piece of bespoke content you generate. It is **not** generic. It must reference an actual phrase, decision, concern, or topic the customer raised in the meeting.
+
+**Hard rule: exactly ONE question.** The bespoke opener fires a single question and stops. Do not compound questions, even with "first... second..." or "and also..." framing. Do not stack a scope-confirmation question on top of a coverage question. Do not ask "is that the scope, and what's your priority for the next 30 days?" — that's two questions. Defer the second question to the next message; ChatGPT will get there once the customer answers the first one. This rule comes from methodology §3 ("one question at a time"); the opener is bound by it like every other turn in the conversation.
 
 Read the meeting transcript. Find the moment that most clearly captures the *scope* the customer wants for this agent. Quote a short phrase or paraphrase a specific concrete detail back at them. Anchor your first question in that specific moment.
 
@@ -210,13 +218,17 @@ If the operator hints paragraph contains a vendor name (operators sometimes writ
 Before you write either file, run this checklist:
 
 1. **Sizing decision logged.** You computed the total combined character count, you picked one-file or two-file path, and you wrote the decision into `state.json`.
-2. **Methodology pasted verbatim, not paraphrased.** Open `reference-docs/discovery-methodology.md`, paste its full body into the prompt block bracketed by the opening/closing methodology markers.
-3. **Bespoke opener references a specific meeting detail.** Not generic. Not "tell me about your business." Pulled from a real phrase or topic in the transcript.
+2. **Methodology placement correct for the path.**
+   - One-file path: methodology body pasted verbatim into `discovery-prompt.md`, bracketed by the opening/closing methodology markers.
+   - Two-file path: methodology body pasted verbatim into `customer-context.md` under a `# Methodology` heading at the top of that file. `discovery-prompt.md` contains a one-line pointer to the attachment, NOT the methodology body.
+3. **Bespoke opener references a specific meeting detail.** Not generic. Not "tell me about your business." Pulled from a real phrase or topic in the transcript. **Exactly ONE question** — no compound openers, no "and also" stacking, no "first... second..." double-asks. Re-read your opener; if it contains more than one question mark or more than one distinct ask, rewrite it.
 4. **Known-vs-unknown map present** and accurately reflects what the brain-doc + meeting already cover.
 5. **No vendor names** in either output file. No model names. No infrastructure names. No internal codenames.
 6. **Cover email substitutions all resolved.** No literal `{customer_first_name}`, `{operator_first_name}`, `{{DISCOVERY_PROMPT}}`, or `{{CUSTOMER_CONTEXT_FILE_PATH}}` left in the email.
-7. **Two-file path only:** `customer-context.md` exists at `{run-dir}/customer-context.md`, contains brain-doc + transcript + operator hints with brief framing headings, and is referenced by absolute path in the cover email.
+7. **Two-file path only:** `customer-context.md` exists at `{run-dir}/customer-context.md`, contains methodology (first) + brain-doc + transcript + operator hints with brief framing headings, and is referenced by absolute path in the cover email.
 8. **One-file path only:** the `--- ATTACH THIS FILE ALONGSIDE YOUR MESSAGE ---` block is omitted from the cover email.
-9. **Discovery-prompt size on the two-file path is under 10,000 characters.** If it isn't, the methodology + opener + scope statement is too verbose — trim your framing, never the methodology.
+9. **Discovery-prompt size caps.**
+   - One-file path: `discovery-prompt.md` is under 25,000 characters. If it isn't, the routing should have been two-file — re-route.
+   - Two-file path: `discovery-prompt.md` is under 10,000 characters. Hard cap. If it isn't, your framing prose is too verbose or methodology has accidentally been inlined — strip until it fits. The methodology body must be in the attachment, not the prompt.
 
 Write the files and stop. Stage 10 reports the path taken, the file sizes, and the absolute paths to the operator's terminal.
