@@ -268,8 +268,8 @@ bash base-agent-setup/scripts/bulk-create-texml-apps.sh
 For each DID in your account that doesn't already have a TeXML app bound, the script:
 
 - Creates a TeXML app named `pool-did-<normalized-e164>` (e.g. `pool-did-61731304231`).
-- Sets `voice_url` to a placeholder, `voice_method=POST`, codec preferences `[OPUS, PCMU]`, `anchorsite_override=Latency`, `status_callback=$DASHBOARD_SERVER_URL/webhooks/call-ended`, `status_callback_method=POST`, and `tags=["pool:available"]`.
-- Binds the DID to the new TeXML app and tags the DID with `pool:available`.
+- Sets `voice_url` to a placeholder, `voice_method=POST`, codec preferences `[OPUS, G711U]`, `anchorsite_override=Latency`, `status_callback=$DASHBOARD_SERVER_URL/webhooks/call-ended`, `status_callback_method=POST`, and `tags=["pool-available"]`.
+- Binds the DID to the new TeXML app and tags the DID with `pool-available`.
 
 The script is **idempotent** — DIDs already bound to a TeXML app are skipped with `[SKIP]`. Re-running after buying more DIDs is safe and only processes the new ones.
 
@@ -277,23 +277,23 @@ To preview without making changes, add `--dry-run`. To target a subset, add `--d
 
 #### Step 5 — Verification
 
-Run this one-liner to confirm every DID has a `pool:available` TeXML app bound. Source `.env` first if you haven't (`set -a; source .env; set +a`).
+Run this one-liner to confirm every DID has a `pool-available` TeXML app bound. Source `.env` first if you haven't (`set -a; source .env; set +a`).
 
 ```bash
-echo "=== pool:available TeXML apps + bound DIDs ==="
+echo "=== pool-available TeXML apps + bound DIDs ==="
 curl --ssl-no-revoke -sS -G "https://api.telnyx.com/v2/texml_applications" \
   --data-urlencode "page[size]=100" \
   -H "Authorization: Bearer $TELNYX_API_KEY" \
   | python3 -c "
 import json, sys
 apps = json.load(sys.stdin).get('data') or []
-pool = [a for a in apps if 'pool:available' in (a.get('tags') or [])]
-claimed = [a for a in pool if any((t or '').startswith('claimed:') for t in (a.get('tags') or []))]
+pool = [a for a in apps if 'pool-available' in (a.get('tags') or [])]
+claimed = [a for a in pool if any((t or '').startswith('claimed-') for t in (a.get('tags') or []))]
 free = [a for a in pool if a not in claimed]
 print(f'  {len(pool)} pool TeXML apps | {len(free)} free | {len(claimed)} claimed')
 for a in pool:
     tags = a.get('tags') or []
-    state = 'CLAIMED' if any((t or '').startswith('claimed:') for t in tags) else 'free'
+    state = 'CLAIMED' if any((t or '').startswith('claimed-') for t in tags) else 'free'
     print(f'    {a.get(\"friendly_name\")}  [{state}]  app_id={a.get(\"id\")}  tags={tags}')
 "
 ```
@@ -595,8 +595,8 @@ You'll know the install is fully working when:
 **Causes & fixes:**
 
 - **Pool actually empty.** Buy more DIDs in the Telnyx portal, then re-run `bash base-agent-setup/scripts/bulk-create-texml-apps.sh` to create + bind TeXML apps for the new DIDs. (Path A: tell your collaborator — they own the Telnyx account and need to buy + bulk-create.)
-- **DIDs were bought but `bulk-create-texml-apps.sh` was never run.** The claim logic looks for TeXML apps tagged `pool:available` — if you bought DIDs but skipped the bulk-create step, no TeXML apps will be tagged. Run the script.
-- **All `pool:available` apps are already tagged `claimed:*`.** Every claim adds a `claimed:<slug>` tag. Either you've claimed every DID, or stale `claimed:*` tags are sticking around. Inspect via the verification block in §4.2 step 5; remove `claimed:*` tags from apps you want to release.
+- **DIDs were bought but `bulk-create-texml-apps.sh` was never run.** The claim logic looks for TeXML apps tagged `pool-available` — if you bought DIDs but skipped the bulk-create step, no TeXML apps will be tagged. Run the script.
+- **All `pool-available` apps are already tagged `claimed-*`.** Every claim adds a `claimed-<slug>` tag. Either you've claimed every DID, or stale `claimed-*` tags are sticking around. Inspect via the verification block in §4.2 step 5; remove `claimed-*` tags from apps you want to release.
 - **API key lacks number-management scope.** Telnyx API keys can have scoped permissions. Re-create the key with full account access if the issue persists.
 
 ### n8n calls fail with 401

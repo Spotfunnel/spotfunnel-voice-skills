@@ -439,14 +439,14 @@ bash scripts/telnyx-claim-did.sh \
 
 The script:
 
-- Lists every TeXML app in the account (`GET /v2/texml_applications`) and filters to apps tagged `pool:available` AND not already tagged `claimed:*`.
+- Lists every TeXML app in the account (`GET /v2/texml_applications`) and filters to apps tagged `pool-available` AND not already tagged `claimed-*`.
 - Cross-references each app's bound DID against `--area-code` (falls back to any-AU if no match unless `--strict-area-code` is passed).
-- Picks one and tags its TeXML app `claimed:<slug>` (keeping `pool:available` for auditability).
+- Picks one and tags its TeXML app `claimed-<slug>` (keeping `pool-available` for auditability).
 - Fires a Resend `warn` alert to `$OPS_ALERT_EMAIL` if pool remaining after this claim is `< 3`.
 - Fires a Resend `crit` alert and exits 1 if the pool is empty.
 - Writes `{run-dir}/claimed-did.json`.
 
-Pass `--customer-slug "$SLUG"` so the `claimed:<slug>` tag is human-meaningful (the script falls back to a timestamp slug if omitted).
+Pass `--customer-slug "$SLUG"` so the `claimed-<slug>` tag is human-meaningful (the script falls back to a timestamp slug if omitted).
 
 ### Output schema
 
@@ -501,7 +501,7 @@ bash scripts/telnyx-wire-texml.sh \
 The script:
 
 1. GETs the phone_number to discover its current `connection_id` (the TeXML app the DID is bound to — set up by `bulk-create-texml-apps.sh` at install time).
-2. GETs the TeXML app and confirms codec is in the known-good set (PCMU, PCMA, G722, OPUS, L16, G711U, G711A — OPUS preferred). Codec mismatch is **WARN-only** because codec is an ops decision.
+2. GETs the TeXML app and confirms codec is in the known-good set (G711U, G711A, G722, OPUS, L16, PCMA — OPUS preferred; G711U is Telnyx's current label for what used to be `PCMU`). Codec mismatch is **WARN-only** because codec is an ops decision.
 3. Confirms `voice_method`, `status_callback`, and `status_callback_method`. **Missing or malformed `status_callback` is a HARD FAIL** — without it, our call lifecycle webhooks don't fire and downstream attribution breaks.
 
 ### Output schema
@@ -513,7 +513,7 @@ The script:
   "did": "+61731304231",
   "texml_app_id": "2942921998587659757",
   "did_bound": true,
-  "codec": "PCMU,PCMA",
+  "codec": "OPUS,G711U",
   "codec_ok": true,
   "status_callback": "https://...",
   "status_callback_ok": true,
