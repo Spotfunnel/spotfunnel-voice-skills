@@ -487,6 +487,8 @@ If `{run-dir}/claimed-did.json` exists with a non-empty `did`, skip Stage 7 and 
 
 **Goal:** verify the claimed DID is bound to the pool TeXML app, and audit the TeXML app's codec + status_callback.
 
+> **Stage 8 verifies; it does not configure.** This stage assumes the operator has already followed [INSTALL.md §4.2 step 5](../../INSTALL.md#step-5--create--configure-each-texml-application) to create the TeXML app(s) with the right `voice_url`, codec, `status_callback`, and `status_callback_method`. If those values are missing or wrong, Stage 8 will halt with a diagnostic — but the fix lives in INSTALL.md, not here. See also INSTALL.md §4.2 step 4 for the per-DID-vs-shared TeXML app decision (which determines whether the script's PATCH at Stage 9 affects one customer or all of them).
+
 ### What to do
 
 ```bash

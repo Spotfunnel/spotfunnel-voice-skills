@@ -30,6 +30,12 @@
 #      diagnostic (the operator's webhook URL is mandatory for our
 #      warm-transfer + lifecycle wiring).
 #
+# If this script halts because of a missing status_callback, malformed
+# voice_url, or unbound DID, the fix is operator-side — see INSTALL.md
+# §4.2 step 5 for the canonical TeXML application configuration recipe
+# (voice_url, voice_method, codec, status_callback, status_callback_method,
+# status callback events). This script verifies; INSTALL.md §4.2 sets up.
+#
 # Writes <out>/texml-wired.json. Exit 1 on any non-recoverable failure.
 
 set -euo pipefail
