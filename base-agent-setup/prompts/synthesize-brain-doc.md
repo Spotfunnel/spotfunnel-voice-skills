@@ -80,7 +80,22 @@ Pull out the following, from any of the three sources. Some fields will be prese
   Everything else — what the agent should say, when to escalate, how to handle frustration, what to say at the close, how to pronounce the firm's initialisms — is Stage 4's job, not Stage 3's.
 - **Notable from meeting** — anything material the customer said in the meeting that doesn't naturally fit the headings above. Examples: a problem they're trying to solve, a previous bad experience with another vendor, a commercial constraint, a stated preference, an unusual operating pattern. Keep this section grounded — only include things that would change how someone designs the agent.
 
-  **No-meeting handling:** if the meeting-transcript input is the placeholder `[NO MEETING TRANSCRIPT — ...]` (operator-flagged forced-broad-scope or website-only run), the entire `## Notable from Meeting` section MUST contain ONLY the literal line `_(no meeting — see operator hints below if any)_` followed (optionally) by the operator-hints paragraph reproduced verbatim and tagged `[from operator hints]`. Do **not** populate this section with `[inferred]` operational nuances, transfer-routing speculation, urgency-detection guidance, "the agent should..." recommendations, or any other design-of-the-agent prose. Operational nuance and behavioural design belong in the Stage-4 enrichment pass (which writes back into other sections of the brain-doc with proper sourcing) — they do **not** belong in `## Notable from Meeting` synthesised at Stage 3 from a placeholder transcript.
+  **No-meeting handling:** if the meeting-transcript input is the placeholder `[NO MEETING TRANSCRIPT — ...]` (operator-flagged forced-broad-scope or website-only run), the entire `## Notable from Meeting` section MUST contain ONLY the literal line `_(no meeting — see operator hints below if any)_` followed (optionally) by the operator-hints paragraph reproduced — **but only after sanitization per the rule directly below**, tagged `[from operator hints]`. Do **not** populate this section with `[inferred]` operational nuances, transfer-routing speculation, urgency-detection guidance, "the agent should..." recommendations, or any other design-of-the-agent prose. Operational nuance and behavioural design belong in the Stage-4 enrichment pass (which writes back into other sections of the brain-doc with proper sourcing) — they do **not** belong in `## Notable from Meeting` synthesised at Stage 3 from a placeholder transcript.
+
+  **Operator-hints sanitization** — when reproducing operator hints inside `## Notable from Meeting`, strip any test-harness or skill-development substrings before pasting. This rule mirrors `prompts/generate-discovery-prompt.md`'s Rule 2 and the two should agree on what counts as test-harness pollution.
+
+  Forbidden substrings (case-insensitive, whole word/phrase): `Stage 1`, `Stage 2`, `Stage 3`, `Stage 4`, `Stage 5`, `Stage 6`, `Stage 7`, `Stage 8`, `Stage 9`, `Stage 10`, `Stage 11`, `Stage 12`, `Stage 13`, `End-to-end test`, `End to end test`, `e2e test`, `stress-test`, `stress test`, `stress-testing`, `forced-broad-scope`, `forced broad scope`, `the pipeline`, `the full pipeline`, `dashboard onboarding`, `test of the skill`, `skill development`, `skill is testing`, `we are testing`, `we're testing`, `test run`.
+
+  **Procedure:**
+
+  1. Read the operator-hints paragraph as it appears in skill state.
+  2. Tokenise into sentences. **Sentences containing any forbidden substring are dropped entirely** — don't try to surgical-edit a sentence. Drop the whole sentence.
+  3. After stripping, if substantive content remains (e.g. `"Agent name vertical-appropriate for a Melbourne-based law firm"` survives), reproduce that content under `[from operator hints]`. Rephrase lightly only if needed for grammar (e.g. into a clean standalone sentence); keep the substantive guidance intact.
+  4. **If nothing substantive remains**, write `_(no operator notes)_` and **omit** the `[from operator hints]` tag entirely (don't tag an empty line).
+
+  **Mechanical check before writing the brain-doc:** grep the assembled brain-doc body for each forbidden substring listed above. Match count must be **zero**. If any match, your sanitization didn't catch it — re-sanitize and re-grep.
+
+  This applies whether the meeting-transcript is the placeholder or a real transcript — operator hints are sanitized either way before they go into `## Notable from Meeting`. The brain-doc is read by the system-prompt assembler (Stage 4) and pasted byte-identical into the agent's runtime prompt; test-harness language poisons that.
 
 ---
 
