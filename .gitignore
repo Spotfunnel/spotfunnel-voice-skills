@@ -1,0 +1,25 @@
+# Secrets — never commit
+.env
+*.local.env
+
+# Per-customer runs (large, ephemeral, contains scraped customer data)
+**/runs/
+!**/runs/.gitkeep
+
+# Operator's per-machine cached env path
+~/.config/spotfunnel-skills/
+
+# Logs and OS junk
+*.log
+.DS_Store
+Thumbs.db
+
+# Editor / tool caches
+.vscode/
+.idea/
+node_modules/
+__pycache__/
+.pytest_cache/
+
+# Temp dirs created by skill scripts
+.tmp-*/
