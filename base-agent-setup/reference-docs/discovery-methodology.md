@@ -221,6 +221,8 @@ Sample phrasing for the flag-and-fallback:
 
 **Brand voice.** Formal or casual? Warmth level — friendly neighbour, polished professional, somewhere in between? Any signature phrases the team uses ("How can I help you today?" vs. "G'day, what can I do for ya?")? Any words that should never come out of the agent's mouth (slang, jargon, competitor names)?
 
+**Humour vs. seriousness register.** Should the agent crack jokes when the moment naturally invites it, or stay strictly professional and goal-oriented? This is a real voice texture decision — a lawyer's receptionist sits very differently on this dial to a tradie's mate-on-the-phone. Ask explicitly; don't infer.
+
 Sample phrasing:
 
 > "If I asked your best receptionist to describe how she sounds on the phone in three adjectives, what would she say? And — flip side — if you heard the agent say something tomorrow that made you cringe, what would it have said?"

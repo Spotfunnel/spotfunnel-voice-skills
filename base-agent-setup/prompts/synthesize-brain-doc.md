@@ -75,6 +75,7 @@ Pull out the following, from any of the three sources. Some fields will be prese
   **What the Tone & Voice section MAY contain:**
   - One short paragraph describing the brand's register (e.g. "direct, blunt, Australian, partner-confident; rejects glossy-corporate; sentences are short").
   - Direct quotes of signature brand phrases the **customer** uses on their site or in the meeting (e.g. _"We don't sugarcoat. We don't over-promise. We deliver."_). Quote them; don't transform them into agent instructions.
+  - **Humour/seriousness signal**, if the source material clearly reveals it. One short line. Examples: `"Site copy cracks dry one-liners ('our coffee tastes better than our jokes') — humour licensed in moderation [from site only]"`, or `"Site copy is uniformly serious, results-led, no jokes anywhere — read as professional/goal-oriented register [from site only]"`. If the source DOESN'T clearly reveal humour-vs-seriousness, **omit this line and emit a `## Knowledge Gaps` item instead** — see the gap-detection procedure below.
   - Languages spoken across the team, if relevant.
 
   Everything else — what the agent should say, when to escalate, how to handle frustration, what to say at the close, how to pronounce the firm's initialisms — is Stage 4's job, not Stage 3's.
