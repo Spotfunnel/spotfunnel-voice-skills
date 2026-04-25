@@ -38,9 +38,11 @@ Applies to both paths.
 You need:
 
 - **Claude Code** installed locally. Install instructions: <https://docs.anthropic.com/en/docs/claude-code>. The skills run inside a Claude Code session — there is no standalone CLI.
-- **A Claude Max subscription** (or higher). The skills use Claude Opus 4.7 inline as their LLM brain for brain-doc synthesis, prompt authoring, and discovery-prompt generation. **All AI inference uses your Claude Code subscription's quota — there is no separate Anthropic API key required.**
+- **A Claude Max subscription** (or higher). The skills use Claude Opus 4.7 inline as their LLM brain for brain-doc synthesis, prompt authoring, and discovery-prompt generation. **All AI inference uses your Claude Code subscription's quota — there is no separate Anthropic API key required for the onboarding skills themselves.**
 - **Git Bash on Windows**, or any POSIX shell on macOS/Linux. The skills' bash blocks assume Unix-style paths and tools (`curl`, `python3`, `grep`, `git`). Native Windows `cmd.exe` and PowerShell are **not** supported as the skill shell — but you'll still use `cmd` once for directory junctions in §3 (Path A) or §5 (Path B).
 - **Python 3** on `PATH`. Used by the skills for safe JSON construction (`python3 -c "import json; ..."`). Verify with `python3 --version`.
+- **Node.js** on `PATH`, only if you intend to run `/stress-test`. The stress-test skill orchestrates a Node-based diagnosis harness (simulated callers, graders, report generation). Not needed for `/base-agent` or `/onboard-customer`. Verify with `node --version` (any 18+ works).
+- **An Anthropic API key**, only if you intend to run `/stress-test`. The simulated-caller side of the harness uses Claude Haiku via the API (~$0.01/call) — separate from the Claude Code subscription used by the onboarding skills. Set as `ANTHROPIC_API_KEY` in your `.env`. Skip if you're not using `/stress-test`.
 
 **Vendor accounts** are only needed on Path B. On Path A your collaborator already owns all of them — you'll piggyback on their access via the `.env` they send you.
 
@@ -84,11 +86,12 @@ You should now see:
 ├── .env.example
 ├── base-agent-setup/
 ├── onboard-customer/
+├── voice-stress-test/
 ├── docs/
 └── schema/
 ```
 
-You'll know it worked when `ls` shows both `base-agent-setup/` and `onboard-customer/` directories, and `cat .env.example` prints the env template.
+You'll know it worked when `ls` shows all three skill directories (`base-agent-setup/`, `onboard-customer/`, `voice-stress-test/`) and `cat .env.example` prints the env template.
 
 ---
 
@@ -132,10 +135,11 @@ mkdir -p "$USERPROFILE/.claude/skills"
 cmd <<'EOF'
 mklink /J "C:\Users\USERNAME\.claude\skills\base-agent-setup" "C:\Users\USERNAME\Code\spotfunnel-voice-skills\base-agent-setup"
 mklink /J "C:\Users\USERNAME\.claude\skills\onboard-customer" "C:\Users\USERNAME\Code\spotfunnel-voice-skills\onboard-customer"
+mklink /J "C:\Users\USERNAME\.claude\skills\voice-stress-test" "C:\Users\USERNAME\Code\spotfunnel-voice-skills\voice-stress-test"
 EOF
 ```
 
-Both should print `Junction created for ...`.
+All three should print `Junction created for ...`.
 
 **macOS / Linux (POSIX symlinks).**
 
@@ -143,6 +147,7 @@ Both should print `Junction created for ...`.
 mkdir -p ~/.claude/skills
 ln -s "$(pwd)/base-agent-setup" ~/.claude/skills/base-agent-setup
 ln -s "$(pwd)/onboard-customer" ~/.claude/skills/onboard-customer
+ln -s "$(pwd)/voice-stress-test" ~/.claude/skills/voice-stress-test
 ```
 
 Verify:
@@ -150,9 +155,10 @@ Verify:
 ```bash
 ls ~/.claude/skills/base-agent-setup/SKILL.md
 ls ~/.claude/skills/onboard-customer/SKILL.md
+ls ~/.claude/skills/voice-stress-test/SKILL.md
 ```
 
-Both must resolve. If either is missing, the junction/symlink isn't pointing at the right place — recreate it.
+All three must resolve. If any is missing, the junction/symlink isn't pointing at the right place — recreate it.
 
 ### 3.4 Open a fresh Claude Code session and run `/base-agent`
 
@@ -439,6 +445,7 @@ mkdir -p "$USERPROFILE/.claude/skills"
 cmd <<'EOF'
 mklink /J "C:\Users\USERNAME\.claude\skills\base-agent-setup" "C:\Users\USERNAME\Code\spotfunnel-voice-skills\base-agent-setup"
 mklink /J "C:\Users\USERNAME\.claude\skills\onboard-customer" "C:\Users\USERNAME\Code\spotfunnel-voice-skills\onboard-customer"
+mklink /J "C:\Users\USERNAME\.claude\skills\voice-stress-test" "C:\Users\USERNAME\Code\spotfunnel-voice-skills\voice-stress-test"
 EOF
 ```
 
@@ -448,6 +455,7 @@ EOF
 mkdir -p ~/.claude/skills
 ln -s "$(pwd)/base-agent-setup" ~/.claude/skills/base-agent-setup
 ln -s "$(pwd)/onboard-customer" ~/.claude/skills/onboard-customer
+ln -s "$(pwd)/voice-stress-test" ~/.claude/skills/voice-stress-test
 ```
 
 Verify:
@@ -455,9 +463,10 @@ Verify:
 ```bash
 ls ~/.claude/skills/base-agent-setup/SKILL.md
 ls ~/.claude/skills/onboard-customer/SKILL.md
+ls ~/.claude/skills/voice-stress-test/SKILL.md
 ```
 
-Both must resolve. If either is missing, the junction/symlink isn't pointing at the right place — recreate it.
+All three must resolve. If any is missing, the junction/symlink isn't pointing at the right place — recreate it.
 
 ---
 
@@ -503,6 +512,8 @@ The fastest way to confirm everything's wired correctly is to start a Claude Cod
 Once Stage 0 prints all green ticks, you can `^C` out of `/base-agent` for now — env preflight is what we wanted to confirm.
 
 You can also do the same check with `/onboard-customer` — it has its own Stage 0 that validates the subset of vars it needs.
+
+`/stress-test` is the third skill in the family — it's the post-tool-design quality gate that runs simulated calls against a finished agent, grades transcripts against a constitution of rules, and produces actionable per-violation reports. It complements `/base-agent` (which builds the rough agent) and `/onboard-customer` (which wires it into the dashboard) by validating the agent's behaviour before it goes live and on every prompt or tool change after. See [`voice-stress-test/SKILL.md`](voice-stress-test/SKILL.md) for invocation patterns. It uses a subset of the same `.env` (`ULTRAVOX_API_KEY`, `ANTHROPIC_API_KEY`) plus its own training-harness directory and constitution config.
 
 ---
 

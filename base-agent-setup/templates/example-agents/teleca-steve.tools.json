@@ -1,0 +1,32 @@
+[
+  {
+    "toolId": "880fb89d-7853-45a2-9b34-30ffe54895e0",
+    "nameOverride": "telecaBusinessHours",
+    "descriptionOverride": "Check if Teleca is open. Returns current Sydney time, day, and isBusinessHours (true = 8:30am-4:45pm Mon-Fri Sydney time). Call this BEFORE your greeting at the start of every call. Determines whether telecaWarmTransfer is available. Do not tell the caller the time unless they ask."
+  },
+  {
+    "toolId": "341fbdac-5f11-4af5-aa53-44524ebfc318",
+    "nameOverride": "telecaSendNumberInfo",
+    "parameterOverrides": {
+      "caller_phone": "{{caller_phone}}"
+    },
+    "descriptionOverride": "Text the caller a link to browse available 1300 or 1800 numbers plus a walkthrough video showing how to sign up. Use when the caller is interested in getting a 1300 or 1800 number. Pass number_type as \"1300\" or \"1800\" based on what the caller wants. Always ask permission before sending."
+  },
+  {
+    "toolId": "21f5e20d-7ac2-4d02-982a-8f90ce063a77",
+    "nameOverride": "telecaWarmTransfer",
+    "parameterOverrides": {
+      "call_sid": "{{call_sid}}",
+      "caller_phone": "{{caller_phone}}"
+    },
+    "descriptionOverride": "Transfer a caller to Teleca staff via conference bridge. Staff hears a prompt and presses 1 to accept. Only use when the caller explicitly asks to speak to someone AND telecaBusinessHours returned isBusinessHours: true. Returns connected: true (caller is with staff, you are done) or connected: false (follow the Teleca transfer fallback cascade in your prompt)."
+  },
+  {
+    "toolId": "0b3550e2-9395-4272-8e64-a7797884e043",
+    "nameOverride": "telecaYouTubeSMS",
+    "parameterOverrides": {
+      "caller_phone": "{{caller_phone}}"
+    },
+    "descriptionOverride": "Text the caller a Teleca YouTube walkthrough video link via SMS. Use when the caller asks how to do something self-service in the portal. Pass the video title - the server fuzzy-matches it to the right URL. Always ask permission before sending."
+  }
+]

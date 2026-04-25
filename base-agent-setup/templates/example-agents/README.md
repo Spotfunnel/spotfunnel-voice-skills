@@ -11,6 +11,17 @@ The repo ships with four reference prompts so you don't start from a blank slate
 
 Drop in your own as you build them. The synthesis prompts scan this directory at runtime for `*.prompt.md` files — naming conventions are descriptive lowercase-hyphenated, but the skill only cares that the files exist and are valid prompts.
 
+Each prompt also has a paired tool-definition file:
+
+- **`teleca-steve.tools.json`**
+- **`teleca-hannah.tools.json`**
+- **`telcoworks-jack.tools.json`**
+- **`telcoworks-emma.tools.json`**
+
+These are **supplementary references for the future post-brief tool-design step** — the part of the per-customer flow where, after the customer's discovery brief comes back, you (or a follow-on skill) sit down and design the `transferToHuman`, `bookAppointment`, `lookupKnowledge`, etc. tools the agent actually needs. The four examples here show **what well-built voice-AI agent tools look like in production**: parameter shapes, descriptions tuned for an LLM caller, dynamic-parameter behaviour, and how transfer / hangup / messaging tools are typically wired.
+
+> **Important — Stages 3 and 4 do NOT read these tool defs.** The rough agent created by `/base-agent` is intentionally tools-free. That's by design: tools depend on the customer's own answers in the discovery brief (which staff to transfer to, which hours, which booking platform, which CRM), so they cannot be authored before the brief comes back. The synthesis prompts at Stage 3 (`synthesize-brain-doc.md`) and Stage 4 (`assemble-rough-system-prompt.md`) only consult the `*.prompt.md` files in this directory for behavioural and structural inspiration. The `.tools.json` files sit alongside as reference material for whatever skill or process designs tools after the brief comes back.
+
 ---
 
 ## How synthesis uses them

@@ -1,0 +1,30 @@
+[
+  {
+    "toolId": "fb034ad6-1b53-4963-8c91-165670e0bb67",
+    "nameOverride": "telcoworksBusinessHours",
+    "descriptionOverride": "Check if Telco Works is open. Returns current Brisbane time, day, and isBusinessHours (true = 8:30am–5pm Mon–Fri AEST). Call this BEFORE your greeting at the start of every call. Determines whether telcoworksWarmTransfer is available. Do not tell the caller the time unless they ask."
+  },
+  {
+    "toolId": "7096871f-371b-4dec-bf38-593a5e9fd1a6",
+    "nameOverride": "telcoworksSendNumberInfo",
+    "parameterOverrides": {
+      "caller_phone": "{{caller_phone}}"
+    },
+    "descriptionOverride": "Text the caller a single SMS with a link to browse Telco Works's available 1300 or 1800 numbers. Use this at the end of a sales call when the caller chooses self-setup. Always ask permission and confirm the mobile number before triggering."
+  },
+  {
+    "toolId": "8db9901d-89e6-4db2-b60f-f3c70690d8cf",
+    "nameOverride": "telcoworksWarmTransfer",
+    "parameterOverrides": {
+      "call_sid": "{{call_sid}}",
+      "from_number": "+61240727436",
+      "caller_phone": "{{caller_phone}}"
+    },
+    "descriptionOverride": "Transfer a caller to Telco Works staff via conference bridge. Staff hears a prompt and presses 1 to accept. Only use when the caller explicitly asks to speak to someone AND telcoworksBusinessHours returned isBusinessHours: true. Returns connected: true (caller is with staff, you're done) or connected: false (follow the fallback cascade in your prompt)."
+  },
+  {
+    "toolId": "0bfa4067-ec59-4647-bbe3-fd8abc8e81fd",
+    "nameOverride": "telcoworksYouTubeSMS",
+    "descriptionOverride": "Text the caller a Telco Works YouTube walkthrough video link via SMS. Use when the caller asks how to do something self-service in the portal. Pass the video title — the server fuzzy-matches it to the right URL. Only offer a video for topics in the Available Videos list in your prompt; for others, assist conversationally or take a message. Always ask permission before sending."
+  }
+]
