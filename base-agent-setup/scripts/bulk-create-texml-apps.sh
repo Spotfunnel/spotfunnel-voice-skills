@@ -148,7 +148,11 @@ for n in body.get("data") or []:
         continue
     rows.append("\t".join([pn, str(pid), str(conn), tags_csv]))
 
-with open(out_path, "w", encoding="utf-8") as f:
+# newline="" suppresses Windows' \n -> \r\n translation. Without it, the
+# bash `read` loop downstream sees a stray \r as the content of the last
+# tab-separated field, which made the CURRENT_CONN check spuriously skip
+# every DID with an empty connection_id (the very ones we want to bind).
+with open(out_path, "w", encoding="utf-8", newline="") as f:
     f.write("\n".join(rows))
     if rows:
         f.write("\n")
