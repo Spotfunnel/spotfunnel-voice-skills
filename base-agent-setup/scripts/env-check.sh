@@ -16,7 +16,7 @@
 #     plus a deliberately-missing-var check. No external API calls.
 
 # --- Self-test mode (runs first so it doesn't trip the rest of the script) ---
-if [ "$1" = "--self-test" ]; then
+if [ "${1:-}" = "--self-test" ]; then
   set -e
   TMPROOT="${TMPDIR:-$HOME/.tmp-spotfunnel-skills}/env-check-self-test-$$"
   mkdir -p "$TMPROOT"
