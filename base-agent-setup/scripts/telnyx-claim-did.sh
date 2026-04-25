@@ -7,12 +7,12 @@
 # Pool model (one TeXML app per DID, always):
 #   - The operator runs `bulk-create-texml-apps.sh` once at setup. That
 #     script creates one TeXML app per DID, binds the DID to its app, and
-#     tags both with `pool:available`.
+#     tags both with `pool-available`.
 #   - This script lists every TeXML app in the account, filters to apps
-#     tagged `pool:available` AND not yet tagged `claimed:*`, and picks
+#     tagged `pool-available` AND not yet tagged `claimed-*`, and picks
 #     one (preferring the customer's area code if requested).
-#   - The picked app's tags are updated to add `claimed:<customer-slug>`
-#     while keeping `pool:available` for auditability.
+#   - The picked app's tags are updated to add `claimed-<customer-slug>`
+#     while keeping `pool-available` for auditability.
 #
 # Args:
 #   --area-code <code>          (optional) AU area code without +61: 02, 03,
@@ -22,7 +22,7 @@
 #                                 numbering plan.
 #   --strict-area-code          (optional flag) abort if no DID matches the
 #                                 area code instead of falling back.
-#   --customer-slug <slug>      (optional) added as a `claimed:<slug>` tag
+#   --customer-slug <slug>      (optional) added as a `claimed-<slug>` tag
 #                                 on the picked TeXML app. Defaults to the
 #                                 ISO timestamp if omitted.
 #   --dry-run                   (optional flag) identify the DID that WOULD
@@ -54,8 +54,8 @@ Usage: bash scripts/telnyx-claim-did.sh \
     --out <dir>
 
 Picks one unassigned DID from the operator's Telnyx pool and writes it to
-<out>/claimed-did.json. Pool members are TeXML apps tagged `pool:available`
-and not yet tagged `claimed:*`. Sends a Resend pool-low alert when remaining
+<out>/claimed-did.json. Pool members are TeXML apps tagged `pool-available`
+and not yet tagged `claimed-*`. Sends a Resend pool-low alert when remaining
 < 3, and a CRIT alert + exit 1 when the pool is exhausted.
 
 Args:
@@ -63,7 +63,7 @@ Args:
                           Empty/omitted = any AU number.
   --strict-area-code      Abort instead of falling back when area code
                           can't be matched.
-  --customer-slug <slug>  Tag value used for `claimed:<slug>`. Defaults to
+  --customer-slug <slug>  Tag value used for `claimed-<slug>`. Defaults to
                           the ISO timestamp.
   --dry-run               Identify the DID without claiming. Pool-low/empty
                           alerts still fire so smoke tests are realistic.
@@ -135,7 +135,7 @@ if [ "${TELNYX_TEST_POOL_EMPTY:-0}" = "1" ]; then
   bash "$SCRIPT_DIR/resend-alert.sh" \
     --severity crit \
     --subject "[VoiceAIMachine] DID pool exhausted" \
-    --body "Zero TeXML apps tagged pool:available (and not yet claimed) found in your Telnyx account. Buy more DIDs and re-run bulk-create-texml-apps.sh, then retry /base-agent. (Simulated via TELNYX_TEST_POOL_EMPTY=1.)" \
+    --body "Zero TeXML apps tagged pool-available (and not yet claimed) found in your Telnyx account. Buy more DIDs and re-run bulk-create-texml-apps.sh, then retry /base-agent. (Simulated via TELNYX_TEST_POOL_EMPTY=1.)" \
     >/dev/null || true
   echo "[ERR] pool exhausted — buy more DIDs in your Telnyx account and re-run" >&2
   exit 1
@@ -211,10 +211,10 @@ def has_tag(app, prefix):
 
 def is_pool_available(app):
     tags = app.get("tags") or []
-    pool_avail = any(isinstance(t, str) and t == "pool:available" for t in tags)
+    pool_avail = any(isinstance(t, str) and t == "pool-available" for t in tags)
     if not pool_avail:
         return False
-    if has_tag(app, "claimed:"):
+    if has_tag(app, "claimed-"):
         return False
     return True
 
@@ -297,7 +297,7 @@ if [ "$PICK_STATUS" = "empty" ]; then
   bash "$SCRIPT_DIR/resend-alert.sh" \
     --severity crit \
     --subject "[VoiceAIMachine] DID pool exhausted" \
-    --body "Zero TeXML apps tagged pool:available (and not yet claimed) found in your Telnyx account. Buy more DIDs in your Telnyx console, run bulk-create-texml-apps.sh to wire them, then re-run /base-agent." \
+    --body "Zero TeXML apps tagged pool-available (and not yet claimed) found in your Telnyx account. Buy more DIDs in your Telnyx console, run bulk-create-texml-apps.sh to wire them, then re-run /base-agent." \
     >/dev/null || true
   exit 1
 fi
@@ -312,7 +312,7 @@ if [ "$FALLBACK_USED" = "true" ]; then
   echo "[WARN] no DID matched area code '$AREA_CODE' — falling back to any unassigned DID in the pool"
 fi
 
-# ----- Step 4: tag the picked TeXML app `claimed:<slug>` (unless --dry-run) -----
+# ----- Step 4: tag the picked TeXML app `claimed-<slug>` (unless --dry-run) -----
 if [ "$DRY_RUN" != "1" ]; then
   CURRENT_TAGS_JSON="$(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1]))["current_tags"]))' "$PICK_FILE")"
   NEW_TAGS_PAYLOAD="$(CUR_TAGS="$CURRENT_TAGS_JSON" SLUG="$CUSTOMER_SLUG" python3 - <<'PY'
@@ -320,7 +320,7 @@ import json, os
 cur = json.loads(os.environ["CUR_TAGS"])
 slug = os.environ["SLUG"]
 new_tags = list(cur)
-claim_tag = f"claimed:{slug}"
+claim_tag = f"claimed-{slug}"
 if claim_tag not in new_tags:
     new_tags.append(claim_tag)
 print(json.dumps({"tags": new_tags}))
@@ -349,7 +349,7 @@ if [ "$REMAINING_AFTER" -lt 3 ]; then
   bash "$SCRIPT_DIR/resend-alert.sh" \
     --severity warn \
     --subject "[VoiceAIMachine] DID pool low — $REMAINING_AFTER remaining" \
-    --body "After this claim only $REMAINING_AFTER pool:available TeXML app(s) remain. Buy more DIDs in your Telnyx console and run bulk-create-texml-apps.sh before the next /base-agent run." \
+    --body "After this claim only $REMAINING_AFTER pool-available TeXML app(s) remain. Buy more DIDs in your Telnyx console and run bulk-create-texml-apps.sh before the next /base-agent run." \
     >/dev/null || true
 fi
 
@@ -387,7 +387,7 @@ PY
 if [ "$DRY_RUN" = "1" ]; then
   echo "[OK] dry-run: would claim $DID via app $APP_ID (area=$PICKED_AREA, remaining_after=$REMAINING_AFTER)"
 else
-  echo "[OK] picked $DID via app $APP_ID (area=$PICKED_AREA, remaining_after=$REMAINING_AFTER, claimed:$CUSTOMER_SLUG)"
+  echo "[OK] picked $DID via app $APP_ID (area=$PICKED_AREA, remaining_after=$REMAINING_AFTER, claimed-$CUSTOMER_SLUG)"
 fi
 echo "[INFO] wrote $OUT_PATH"
 exit 0

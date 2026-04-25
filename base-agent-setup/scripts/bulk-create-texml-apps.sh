@@ -4,7 +4,7 @@
 # One-shot setup: for every DID in the operator's Telnyx account that isn't
 # already bound to a TeXML application, create a per-DID TeXML app with the
 # correct codec / voice_url placeholder / status_callback config, bind the
-# DID to its new app, and tag both with `pool:available`.
+# DID to its new app, and tag both with `pool-available`.
 #
 # After this script runs, the operator never manages TeXML app IDs by hand
 # again — `telnyx-claim-did.sh` discovers pool-available apps via tags at
@@ -43,7 +43,7 @@ Usage: bash scripts/bulk-create-texml-apps.sh \
     [--dry-run]
 
 For every DID in your Telnyx account without a TeXML app bound, creates a
-TeXML app, binds the DID to it, and tags everything `pool:available`.
+TeXML app, binds the DID to it, and tags everything `pool-available`.
 Idempotent — DIDs already bound are skipped.
 EOF
 }
@@ -185,7 +185,7 @@ while IFS=$'\t' read -r DID PN_ID CURRENT_CONN TAGS_CSV; do
   FRIENDLY_NAME="pool-did-${NORMALIZED}"
 
   if [ "$DRY_RUN" = "1" ]; then
-    echo "[OK] (dry-run) would create TeXML app '$FRIENDLY_NAME' and bind DID $DID (pool:available)"
+    echo "[OK] (dry-run) would create TeXML app '$FRIENDLY_NAME' and bind DID $DID (pool-available)"
     PROCESSED=$((PROCESSED + 1))
     continue
   fi
@@ -204,9 +204,9 @@ payload = {
     "status_callback_method": "POST",
     "anchorsite_override": "Latency",
     "inbound": {
-        "codecs": ["OPUS", "PCMU"],
+        "codecs": ["OPUS", "G711U"],
     },
-    "tags": ["pool:available"],
+    "tags": ["pool-available"],
 }
 print(json.dumps(payload))
 PY
@@ -242,7 +242,7 @@ PY
 import json, os
 print(json.dumps({
     "connection_id": os.environ["NEW_APP_ID"],
-    "tags": ["pool:available"],
+    "tags": ["pool-available"],
 }))
 PY
 )"
@@ -264,7 +264,7 @@ PY
   fi
   rm -f "$PATCH_RESP"
 
-  echo "[OK] $DID -> app $NEW_APP_ID (pool:available)"
+  echo "[OK] $DID -> app $NEW_APP_ID (pool-available)"
   PROCESSED=$((PROCESSED + 1))
 
 done < "$CANDIDATES_FILE"
