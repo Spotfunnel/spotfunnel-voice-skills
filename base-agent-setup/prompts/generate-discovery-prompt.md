@@ -70,7 +70,7 @@ Round to nearest 500 chars.
   In two-file mode the methodology body is **too large to live inline** — it has to move into the attached context file alongside the per-customer ground truth. Otherwise the discovery-prompt itself blows past any reasonable paste cap.
 
   Emit two files:
-  - `discovery-prompt.md` — short, paste-friendly. Contents: framing line + bespoke opener (one question only — see element 4 below) + scope statement + known-vs-unknown map + output-schema reminder + a one-line pointer telling ChatGPT to read the methodology and per-customer context in the attached `customer-context.md` file. **NO methodology body inline. NO transcript inline. NO brain-doc inline.** This file must come in **under 10,000 characters**, hard cap.
+  - `discovery-prompt.md` — short, paste-friendly. Contents: framing line + a one-line pointer telling ChatGPT to read the methodology and per-customer context in the attached `customer-context.md` file + known map + numbered to-do list (the visual centrepiece — see element 4 below) + bespoke opener (one punchy question only — see element 5 below) + output-schema reminder + tone instruction. **NO methodology body inline. NO transcript inline. NO brain-doc inline.** This file must come in **under 10,000 characters**, hard cap.
   - `customer-context.md` — methodology body (verbatim) + brain-doc body (post-sanitization, see "Sanitization rules" below) + meeting transcript verbatim (post-sanitization, see below) + operator hints (post-sanitization, see below), with brief framing headings: `# Methodology` (the verbatim discovery-methodology body), `# Business summary` (brain-doc), `# Meeting transcript`, `# Operator notes`. Methodology comes first in this file because ChatGPT needs to ingest it before it does anything else with the per-customer context.
 
   The customer pastes `discovery-prompt.md` as their first message and drag-drops the literal `customer-context.md` file as an attachment to that same message.
@@ -87,7 +87,19 @@ In `state.json` write `discovery_prompt.size_path: "one-file"` or `"two-file"` a
 
 ## What the generated discovery prompt must contain
 
-Whether one-file or two-file, the discovery prompt itself (the part the customer pastes as their first message) must contain these elements, in roughly this order. Write each element as natural prose addressed to ChatGPT — not as headed sections — so it reads as a single coherent instruction block.
+Whether one-file or two-file, the discovery prompt itself (the part the customer pastes as their first message) must contain these elements, in this order:
+
+1. **Framing line** (identity)
+2. **Methodology** (verbatim inline on one-file path, pointer on two-file path)
+3. **Per-customer ground truth** (inline on one-file path; lives in attachment on two-file path)
+4. **Known map + numbered to-do list** — *the visual centrepiece of the prompt*
+5. **Bespoke first question** — punchy, 1–2 sentences, anchored in ONE specific
+6. **Output schema reminder**
+7. **Conversational tone instruction**
+
+The to-do list (element 4) comes **before** the bespoke opener (element 5). This is deliberate. ChatGPT reads the work first, then receives the entry-point question. The opener is just the door; the to-do list is the room.
+
+Write each element as natural prose addressed to ChatGPT — except element 4, which **must** render as a numbered list (see element 4 spec below for hard rules). The rest reads as a single coherent instruction block.
 
 ### 1. Framing line
 
@@ -143,37 +155,86 @@ This pointer is the only methodology-related content in `discovery-prompt.md` on
 >
 > [...operator hints paragraph...]"
 
-**Two-file path:** the inline brain-doc + transcript + hints content does NOT appear here either — it's all in the attachment, after the methodology section. The pointer-line you wrote at element 2 already covers this; you don't duplicate it. Move on to element 4 (the bespoke opener).
+**Two-file path:** the inline brain-doc + transcript + hints content does NOT appear here either — it's all in the attachment, after the methodology section. The pointer-line you wrote at element 2 already covers this; you don't duplicate it. Move on to element 4 (the known map + to-do list).
 
-### 4. The bespoke first question — REQUIRED, NOT OPTIONAL — exactly ONE question
+### 4. Known map + the to-do list (the visual centrepiece)
 
-This is the single highest-value piece of bespoke content you generate. It is **not** generic. It must reference an actual phrase, decision, concern, or topic the customer raised in the meeting.
+This is the **work** of the discovery prompt. ChatGPT will skim everything else; it must not skim this. Make it visually punchier than every other section. The customer will read the rendered prompt over ChatGPT's shoulder; both audiences need this section to read as a tight, numbered task list rather than a paragraph of run-ons.
 
-**Hard rule: exactly ONE question.** The bespoke opener fires a single question and stops. Do not compound questions, even with "first... second..." or "and also..." framing. Do not stack a scope-confirmation question on top of a coverage question. Do not ask "is that the scope, and what's your priority for the next 30 days?" — that's two questions. Defer the second question to the next message; ChatGPT will get there once the customer answers the first one. This rule comes from methodology §3 ("one question at a time"); the opener is bound by it like every other turn in the conversation.
+#### 4a. Already settled — do not re-ask
 
-Read the meeting transcript. Find the moment that most clearly captures the *scope* the customer wants for this agent. Quote a short phrase or paraphrase a specific concrete detail back at them. Anchor your first question in that specific moment.
+A short paragraph or compact bullet list that names what's already in the brain-doc + meeting so ChatGPT doesn't waste a question on it. Pull these from the brain-doc and the meeting transcript. Examples of items: business hours, services offered, staff first names, the published phone number, the agent's general scope (when the meeting set it), the existing booking system, the brand voice in broad strokes.
 
-Examples of the right shape (these are illustrative — yours will be different and customer-specific):
+Example shape (write yours similarly, customer-specific):
 
-- *"You said in our call that you don't want a full receptionist — Karen handles that during the day, and what you actually want is just for the Google Ads number to be answered after hours and book new patients into your Cliniko diary. Before I dig in, let me reflect that back: this agent's only job is the after-hours overflow on the Ads line, qualifying new-patient inquiries and booking them in. Anything outside that — existing patients, massage queries, sales calls — gets a polite handoff and the call ends. Is that the scope you want, or should I broaden it?"*
+> "**Already settled — do not re-ask:** business hours, services offered, staff names, address, the agent's general scope (per the meeting), the existing booking system, the brand voice in broad strokes."
 
-- *"You mentioned Mondays are insane — 80 calls before 1pm — and that the worst calls today are the ones where someone's put on hold for two minutes and they hang up. That second one tells me something specific about how you want this agent to behave. Before we dig in, let me anchor: the agent's job is to pick up everything across all hours and never park anyone on hold; daytime it supports Megan when she's flooded, after-hours it's the only line, and it routes clinical follow-ups to the right dentist. That match how you see it, or should I tighten it somewhere?"*
+#### 4b. Your job — get clear on these with the customer
 
-The pattern: short paraphrase of a real meeting detail → reflection of inferred scope → explicit "is this the scope?" ask. Per methodology §8 "Phase 1," every interview opens with scope confirmation, not a coverage-target question.
+Then a **numbered to-do list** of every coverage-target item from the methodology that is in scope but not yet answered. **This list IS the work.** Frame it as instructions to ChatGPT, not a topic survey.
 
-If the meeting is so short or vague that you genuinely cannot find a specific phrase to anchor on, write the opener around the *clearest signal* the meeting did contain (e.g. the type of business the customer mentioned wanting help with, or the specific tool they named) — but never default to a generic "tell me about your business" opener. The customer's already had the meeting. They expect the conversation to start informed.
+**Hard rules for this section:**
 
-### 5. Known-vs-unknown map
+- **Numbered list, 1–N.** Not a paragraph. Not semicolon-separated. Not "and... and... and..." run-ons.
+- **One short line per item.** Hard cap **15 words per item**. If a line wants to balloon, split it into two items or trim it.
+- **Imperative phrasing.** Each item reads like a task: "Caller personas in practice — who actually rings the line." Not "caller personas, per-persona dream call endings, transfer-target rules…" all jammed together.
+- **No semicolons inside an item.** Semicolons signal a run-on; if you need one, you've packed two items into one.
+- **Bold framing line above the list.** Use the literal heading **`Your job — get clear on these with [Customer first name]:`** (or **`Your job — get clear on these with the customer:`** when no first name is on file). It must read as an instruction list, not a topic list.
+- **Closing instruction line below the list.** Add a single line *after* the numbered items, in bold, that reads: **`These are your tasks. Work through them. Don't skip any. The opener below is just your entry point — this list is the work.`**
 
-A short paragraph that names what's already settled (so ChatGPT doesn't waste a question on it) and what's still open (so it knows where to drill). Draw the "known" side from the brain-doc and meeting; draw the "unknown" side from the methodology coverage targets minus what was already covered.
+Worked example of the shape (your contents will be customer-specific):
 
-Example shape:
-
-> "**Already settled — do not re-ask:** business hours, services offered, staff names, address, the agent's general scope (per the meeting), the existing booking system, the brand voice in broad strokes.
+> "**Your job — get clear on these with Sarah:**
 >
-> **Still to nail down with the customer:** [list of items pulled from coverage A–F that are in scope but not yet answered]."
+> 1. Caller personas in practice — who actually rings the line.
+> 2. Per-persona dream call ending — what each caller leaves with.
+> 3. Transfer rules — name, role, direct number, trigger per target.
+> 4. After-hours and emergency-escalation policy.
+> 5. Active CRM/calendar/SMS tools — specific products and versions.
+> 6. Per-integration dream behaviour — what writes where, when.
+> 7. Voice and red lines beyond the broad register on file.
+> 8. Call-recording posture and jurisdictional disclosure handling.
+> 9. Known failure modes today — what currently goes wrong on calls.
+> 10. Call volume and peak-time patterns.
+>
+> **These are your tasks. Work through them. Don't skip any. The opener below is just your entry point — this list is the work.**"
 
-This map is for ChatGPT's benefit. It enforces the methodology's "never re-ask" principle (principle 2) by making the already-answered items explicit up front.
+This section enforces the methodology's "never re-ask" principle (principle 2) by making the already-answered items explicit up front, AND it enforces the methodology's coverage targets (§3 A–F) by making the still-open items a literal numbered to-do list ChatGPT can tick through.
+
+### 5. The bespoke first question — REQUIRED, NOT OPTIONAL — exactly ONE question, PUNCHY
+
+The bespoke opener is the **entry point**, not the centrepiece. Element 4 above is the centrepiece. The opener's only job is to start the conversation in a way that is anchored in this specific customer (so the customer feels read), and that opens onto the first task in the to-do list above.
+
+**Hard rules — read every one:**
+
+1. **1–2 short sentences. Hard cap ~40 words combined.** Not a paragraph. Not five sentences with em-dashes. The customer should be able to answer the question in their head before they finish reading it.
+2. **Plain language.** Banned phrasing — do **not** use any of: "throughline", "anchor scope", "anchor the scope", "before we go anywhere near", "land in the middle", "we'll work outward from there", "I want to anchor", "Tell me:" preamble, "let me reflect that back", "let me anchor", "before I dig in", "before we dig in".
+3. **Anchor in ONE concrete customer specific.** Pick the single most distinctive: a quoted brand phrase, a single named service, the published phone number, or a specific named tool from the meeting. **One** — not three. Not "Facebook, Google, email, direct mail, webinars, sales automation, the lot." Pick the one that's most distinctive to *this* business.
+4. **End with a direct question.** A single question mark. The question must be answerable mentally in one second.
+5. **Exactly ONE question.** The bespoke opener fires a single question and stops. Do not compound questions, even with "first... second..." or "and also..." framing. Do not stack a scope-confirmation question on top of a coverage question. This rule comes from methodology §3 ("one question at a time").
+6. **No long preamble.** Do not explain what the agent is, what the question is for, or why you're asking. The to-do list above already framed the work. Just ask the question.
+
+**GOOD examples — note the brevity, the single concrete anchor, the direct question:**
+
+- *"Your line says 1300 793 923 — when it rings tomorrow morning, what's the single most valuable thing the agent can do for the business?"* (29 words. Anchored in the published phone number. Direct question. Customer answers in one second.)
+
+- *"You mentioned the 'Client Acquisition Formula' is your headline service — what does the agent need to nail on a call from a Formula prospect?"* (26 words. Anchored in one quoted brand phrase. Direct question.)
+
+- *"You said Mondays are 80 calls before 1pm — what's the one thing the agent has to get right for a Monday-morning caller?"* (24 words. Anchored in a specific meeting detail. Direct question.)
+
+- *"Your site mentions the Profit Performance Promise — should the agent quote it on a call, or always defer to Simeon?"* (21 words. Anchored in a single brand-named program. Direct question.)
+
+**BAD examples — these are the patterns to avoid:**
+
+- *"Looking at your site, the throughline is the contrast between 'one-trick' single-channel agencies and the breadth-and-depth Client Acquisition Formula — Facebook, Google, email, direct mail, webinars, sales automation, the lot. The agent answering your line is going to land in the middle of that positioning, so before we go anywhere near integrations or call-handling, I want to anchor the scope in your terms. Tell me: when this agent picks up the phone tomorrow morning at 1300 793 923, what's the single most valuable thing it can do — book the discovery call cleanly, qualify the caller, take a structured message, or all of the above?"* (~110 words. "Throughline", "land in the middle", "anchor the scope", "before we go anywhere near", "Tell me:" preamble all banned. Six anchors instead of one. Compound multiple-choice question instead of a direct one.)
+
+- *"Before I dig in, let me reflect that back: this agent's only job is X, Y, and Z. Anything outside that gets a polite handoff. Is that the scope you want, or should I broaden it?"* (Banned: "Before I dig in", "let me reflect that back". Compound question — "is that the scope, or should I broaden it" is two questions.)
+
+- *"Tell me about your business and what you'd want the agent to do for it."* (Generic. The customer's already had the meeting; they expect the conversation to start informed.)
+
+The pattern that works: **one concrete anchor → direct question.** Nothing else.
+
+If the meeting transcript is so short or vague that you genuinely cannot find a specific phrase to anchor on, anchor on **the single most distinctive thing in the brain-doc** — typically a named service, a quoted brand phrase, or the published phone number — and ask a direct question off it. Never default to a generic "tell me about your business" opener.
 
 ### 6. Output schema reminder
 
@@ -292,8 +353,8 @@ Before you write either file, run this checklist:
 2. **Methodology placement correct for the path.**
    - One-file path: methodology body pasted verbatim into `discovery-prompt.md`, bracketed by the opening/closing methodology markers.
    - Two-file path: methodology body pasted verbatim into `customer-context.md` under a `# Methodology` heading at the top of that file. `discovery-prompt.md` contains a one-line pointer to the attachment, NOT the methodology body.
-3. **Bespoke opener references a specific meeting detail.** Not generic. Not "tell me about your business." Pulled from a real phrase or topic in the transcript. **Exactly ONE question** — no compound openers, no "and also" stacking, no "first... second..." double-asks. Re-read your opener; if it contains more than one question mark or more than one distinct ask, rewrite it.
-4. **Known-vs-unknown map present** and accurately reflects what the brain-doc + meeting already cover.
+3. **Bespoke opener is punchy.** **Hard cap ~40 words / 1–2 sentences.** Anchored in ONE concrete customer specific (a quoted phrase, a single named service, the published phone number — pick ONE most distinctive). Ends with a direct question the customer can answer mentally in one second. **Mechanical check:** count words in your opener — if it's over 40, cut. Count question marks — if more than one, you have compound questions; rewrite. Grep the opener for any banned phrase: "throughline", "anchor scope", "anchor the scope", "before we go anywhere near", "land in the middle", "we'll work outward from there", "I want to anchor", "Tell me:" preamble, "let me reflect that back", "let me anchor", "before I dig in", "before we dig in". Match count must be zero.
+4. **Known map + numbered to-do list present and visually punchy.** The "Already settled" sub-section is a short paragraph or compact bullet list. The **`Your job — get clear on these with [Customer]`** sub-section is a **numbered list (1–N), one short line per item, no semicolons, no run-ons**. Every item is **≤15 words**. The closing instruction line **`These are your tasks. Work through them. Don't skip any. The opener below is just your entry point — this list is the work.`** is present in bold below the list. **Mechanical check:** verify the to-do section renders as numbered items, not a paragraph. Verify each line is ≤15 words. Verify zero semicolons inside any item.
 5. **No vendor names** in either output file. No model names. No infrastructure names. No internal codenames.
 6. **Cover email substitutions all resolved.** No literal `{customer_first_name}`, `{operator_first_name}`, `{{DISCOVERY_PROMPT}}`, or `{{CUSTOMER_CONTEXT_FILE_PATH}}` left in the email.
 7. **Two-file path only:** `customer-context.md` exists at `{run-dir}/customer-context.md`, contains methodology (first) + brain-doc + transcript + operator hints with brief framing headings, and is referenced by absolute path in the cover email.
