@@ -1,0 +1,23 @@
+{
+  "business_description": "Small family dental clinic in Melbourne. Inbound receptionist takes appointment bookings, reschedules, and handles after-hours emergency triage. Can transfer urgent cases to the on-call dentist.",
+  "plan_type": "inbound",
+  "attached_tools": ["warm_transfer", "send_sms_video"],
+  "intents": [
+    { "key": "book_appointment",        "label": "Book appointment",       "description": "New or existing patient wants to schedule a check-up, cleaning, or specific treatment",              "color": "#0B6D3E" },
+    { "key": "reschedule_or_cancel",    "label": "Reschedule / cancel",    "description": "Change or cancel an existing booking",                                                                "color": "#2563eb" },
+    { "key": "treatment_question",      "label": "Treatment question",     "description": "Asking about a procedure, cost, recovery, insurance coverage, or aftercare instructions",             "color": "#555555" },
+    { "key": "emergency_triage",        "label": "Emergency",              "description": "Urgent pain, trauma, broken tooth, post-op complication — needs clinical judgement",                  "color": "#B85C93" },
+    { "key": "billing_or_insurance",    "label": "Billing / insurance",    "description": "Invoice, payment plan, Medicare/private-insurance claim question",                                    "color": "#B47A00" },
+    { "key": "wrong_number_or_spam",    "label": "Wrong number",           "description": "Not a real patient — wrong number, marketing call, spam",                                             "color": "#555555" }
+  ],
+  "outcomes": [
+    { "key": "appointment_booked",      "label": "Appointment booked",     "description": "Agent confirmed a slot in the booking tool and SMS'd the details",                                   "color": "#0B6D3E" },
+    { "key": "appointment_changed",     "label": "Appointment changed",    "description": "Reschedule/cancel completed successfully; patient got confirmation SMS",                             "color": "#0B6D3E" },
+    { "key": "transferred_to_dentist",  "label": "Transferred",            "description": "Warm transfer to on-call dentist succeeded",                                                          "color": "#B85C93" },
+    { "key": "transfer_failed",         "label": "Transfer failed",        "description": "Transfer attempted but didn't complete",                                                              "color": "#B85C93" },
+    { "key": "info_resolved",           "label": "Info resolved",          "description": "Caller's question answered without an SMS or transfer",                                               "color": "#0B6D3E" },
+    { "key": "message_taken",           "label": "Message taken",          "description": "Caller asked the practice to call them back; agent captured the message",                            "color": "#2563eb" },
+    { "key": "abandoned",               "label": "Abandoned",              "description": "Caller hung up before agent could finish",                                                             "color": "#B47A00" },
+    { "key": "unclassified",            "label": "Needs review",           "description": "Agent couldn't categorize. Should be near-zero in a healthy system; auto-flags for human review",    "color": "#555555" }
+  ]
+}

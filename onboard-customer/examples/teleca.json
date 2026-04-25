@@ -1,0 +1,24 @@
+{
+  "business_description": "Teleca is an Australian toll-free number provider (1300, 1800, virtual local, mobile-masking). Inbound receptionist style: answers customer calls about new numbers, existing-account admin, billing, tech support, and warm-transfers to named staff (Simon, Jess, Sales, Accounts).",
+  "plan_type": "inbound",
+  "attached_tools": ["warm_transfer", "send_sms_video", "send_number_info"],
+  "intents": [
+    { "key": "new_number_inquiry",   "label": "New number",        "description": "Prospect researching or wanting to get a new 1300/1800/virtual local number",                                                   "color": "#0B6D3E" },
+    { "key": "port_existing_number", "label": "Port in/out",       "description": "Caller has an existing number elsewhere and wants to move it",                                                                 "color": "#2563eb" },
+    { "key": "account_admin",        "label": "Account / settings","description": "Existing customer wants to change something — forwarding, IVR, voicemail, contact details, plan upgrade, contract changes",    "color": "#555555" },
+    { "key": "billing_or_payment",   "label": "Billing",           "description": "Invoice request, payment problems, overdue, refund, per-minute rate query",                                                    "color": "#B47A00" },
+    { "key": "tech_support",         "label": "Tech support",      "description": "Something's broken — calls not connecting, IVR loop, fault report, voicemail not arriving",                                    "color": "#B47A00" },
+    { "key": "transfer_to_human",    "label": "Speak to a person", "description": "Specifically asked for Simon / Mel / Anna / Sales / Accounts / the manager",                                                    "color": "#B85C93" },
+    { "key": "wrong_number_or_spam", "label": "Wrong number",      "description": "Not a real customer — wrong number, spam, hostile",                                                                            "color": "#555555" }
+  ],
+  "outcomes": [
+    { "key": "numbers_link_sent",    "label": "Numbers link sent", "description": "Agent triggered telecaSendNumberInfo — caller got SMS with numbers page + signup link",              "color": "#0B6D3E" },
+    { "key": "support_video_sent",   "label": "Support video sent","description": "Agent triggered telecaSendSMS — caller got SMS with a video tutorial",                              "color": "#0B6D3E" },
+    { "key": "transferred_to_team",  "label": "Transferred",       "description": "Warm transfer succeeded — caller is now with a human",                                              "color": "#B85C93" },
+    { "key": "transfer_failed",      "label": "Transfer failed",   "description": "Transfer attempted but didn't complete (no answer, dropped, busy)",                                 "color": "#B85C93" },
+    { "key": "info_resolved",        "label": "Info resolved",     "description": "Caller's question answered without an SMS or transfer",                                             "color": "#0B6D3E" },
+    { "key": "message_taken",        "label": "Message taken",     "description": "Caller asked the team to call them back; agent captured the message",                               "color": "#2563eb" },
+    { "key": "abandoned",            "label": "Abandoned",         "description": "Caller hung up before agent could finish",                                                          "color": "#B47A00" },
+    { "key": "unclassified",         "label": "Needs review",      "description": "Agent couldn't categorize. Should be near-zero in a healthy system; auto-flags for human review",   "color": "#555555" }
+  ]
+}
