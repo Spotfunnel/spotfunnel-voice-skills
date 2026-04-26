@@ -1,6 +1,11 @@
 # Secrets — never commit
 .env
 *.local.env
+.env.local
+
+# Next.js build output
+.next/
+next-env.d.ts
 
 # Per-customer runs (large, ephemeral, contains scraped customer data)
 **/runs/
