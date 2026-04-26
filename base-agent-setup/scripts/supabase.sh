@@ -11,8 +11,12 @@
 #
 # All requests target the operator_ui schema via Accept-Profile / Content-Profile
 # headers — Supabase REST exposes non-public schemas this way.
-
-set -euo pipefail
+#
+# This file is a sourced library — it deliberately does NOT `set -euo pipefail`
+# because that would propagate to the caller shell (SKILL.md inlines bash blocks
+# in a long-running session; we don't want one stage script's `state_set` to
+# permanently flip strict-mode for everything that follows). Each EXECUTABLE
+# script that sources this should set its own strict-mode flags.
 
 SUPABASE_OPERATOR_URL="${SUPABASE_OPERATOR_URL:?must set SUPABASE_OPERATOR_URL}"
 SUPABASE_OPERATOR_SERVICE_ROLE_KEY="${SUPABASE_OPERATOR_SERVICE_ROLE_KEY:?must set SUPABASE_OPERATOR_SERVICE_ROLE_KEY}"

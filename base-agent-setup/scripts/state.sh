@@ -12,8 +12,12 @@
 #
 #   USE_SUPABASE_BACKEND=1
 #     Supabase backend. Each run is a row in operator_ui.runs keyed by
-#     slug_with_ts. STATE_RUN_DIR holds the slug_with_ts (NOT a filesystem
-#     path) and is the only thing the rest of the skill needs to track.
+#     slug_with_ts.
+#     STATE_RUN_DIR is STILL a filesystem path (a local scratch dir at
+#     runs/{slug_with_ts}/) so SKILL.md's existing `$STATE_RUN_DIR/...` paths
+#     keep working for curl outputs, intermediate JSON, scrape pages, etc.
+#     STATE_RUN_ID holds the slug_with_ts identifier — used by stage scripts
+#     that POST to operator_ui.artifacts.
 #     Requires SUPABASE_OPERATOR_URL + SUPABASE_OPERATOR_SERVICE_ROLE_KEY.
 #
 # Both backends expose the same six functions with the same return shapes,
@@ -124,7 +128,8 @@ state_init() {
       return 1
     fi
 
-    # Insert run row with empty state jsonb.
+    # Insert run row with empty state jsonb. Validate the response shape so a
+    # PostgREST error JSON doesn't get silently dropped.
     body="$(python3 -c '
 import json, sys
 print(json.dumps({
@@ -134,9 +139,27 @@ print(json.dumps({
     "state": {},
 }))
 ' "$customer_id" "$slug_with_ts" "$iso")"
-    supabase_post "runs" "$body" >/dev/null
+    local insert_resp
+    insert_resp="$(supabase_post "runs" "$body")"
+    python3 -c '
+import json, sys
+d = json.loads(sys.stdin.read())
+if not isinstance(d, list) or len(d) != 1 or "id" not in d[0]:
+    sys.stderr.write(f"state_init: unexpected runs insert response: {d}\n")
+    sys.exit(1)
+' <<<"$insert_resp" || return 1
 
-    export STATE_RUN_DIR="$slug_with_ts"
+    # Always create a local scratch dir for stage scripts (curl outputs,
+    # intermediate JSON, scrape pages). STATE_RUN_DIR stays a real filesystem
+    # path in BOTH backends so SKILL.md's `$STATE_RUN_DIR/brain-doc.md` etc.
+    # keep working. The Supabase run identifier is exposed separately as
+    # STATE_RUN_ID (used by stage scripts that POST to operator_ui.artifacts).
+    local runs_root run_dir
+    runs_root="$(_state_resolve_runs_root)"
+    run_dir="$runs_root/${slug_with_ts}"
+    mkdir -p "$run_dir"
+    export STATE_RUN_DIR="$run_dir"
+    export STATE_RUN_ID="$slug_with_ts"
     echo "$slug_with_ts"
     return 0
   fi
@@ -155,6 +178,7 @@ with open(path, "w", encoding="utf-8") as f:
     json.dump({"slug": slug, "started_at": started_at, "stages": {}}, f, indent=2)
 PY
   export STATE_RUN_DIR="$run_dir"
+  export STATE_RUN_ID="$(basename "$run_dir")"
   echo "$run_dir"
 }
 
@@ -430,7 +454,14 @@ state_resume_from() {
       echo "state_resume_from: no runs for slug '$slug'" >&2
       return 1
     fi
-    export STATE_RUN_DIR="$slug_with_ts"
+    # Recreate the local scratch dir if missing (it may not exist on a
+    # different machine resuming the same run via Supabase).
+    local runs_root run_dir
+    runs_root="$(_state_resolve_runs_root)"
+    run_dir="$runs_root/${slug_with_ts}"
+    mkdir -p "$run_dir"
+    export STATE_RUN_DIR="$run_dir"
+    export STATE_RUN_ID="$slug_with_ts"
     echo "$slug_with_ts"
     return 0
   fi
@@ -468,6 +499,7 @@ PY
   fi
   match="$(cd "$match" && pwd)"
   export STATE_RUN_DIR="$match"
+  export STATE_RUN_ID="$(basename "$match")"
   echo "$match"
 }
 
