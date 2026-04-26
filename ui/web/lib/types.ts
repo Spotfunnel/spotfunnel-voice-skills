@@ -23,3 +23,27 @@ export type Run = {
     [key: string]: unknown;
   };
 };
+
+export type Artifact = {
+  artifact_name: string;
+  content: string;
+};
+
+// Canonical chapter order for the 6 artifact-backed slots. Index drives
+// chapter numbering on the customer page (M4) and "Next:" footer logic on
+// the reading-mode page (M5). `scraped-pages` is intentionally NOT here —
+// it's chapter 7, sourced from run.state, and handled separately.
+export const ARTIFACT_ORDER: ReadonlyArray<{ name: string; artifact: string }> = [
+  { name: "Brain doc", artifact: "brain-doc" },
+  { name: "System prompt", artifact: "system-prompt" },
+  { name: "Discovery prompt", artifact: "discovery-prompt" },
+  { name: "Customer context", artifact: "customer-context" },
+  { name: "Cover email", artifact: "cover-email" },
+  { name: "Meeting transcript", artifact: "meeting-transcript" },
+];
+
+// Slug allowlist derived from ARTIFACT_ORDER — kept as a Set for O(1) checks
+// in the reading-mode route.
+export const ARTIFACT_SLUGS: ReadonlySet<string> = new Set(
+  ARTIFACT_ORDER.map((c) => c.artifact),
+);

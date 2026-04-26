@@ -1,18 +1,7 @@
 import { notFound } from "next/navigation";
 import { getServerSupabase } from "@/lib/supabase-server";
 import { ChapterRow } from "@/components/ChapterRow";
-import type { Customer, Run } from "@/lib/types";
-
-// Fixed chapter order. Index 0..5 correspond to artifact_name rows;
-// index 6 is the special scraped-pages chapter that reads from run.state.
-const CHAPTERS: Array<{ name: string; artifact: string }> = [
-  { name: "Brain doc", artifact: "brain-doc" },
-  { name: "System prompt", artifact: "system-prompt" },
-  { name: "Discovery prompt", artifact: "discovery-prompt" },
-  { name: "Customer context", artifact: "customer-context" },
-  { name: "Cover email", artifact: "cover-email" },
-  { name: "Meeting transcript", artifact: "meeting-transcript" },
-];
+import { ARTIFACT_ORDER, type Customer, type Run } from "@/lib/types";
 
 const TOTAL_STAGES = 11;
 
@@ -96,7 +85,7 @@ export default async function CustomerPage({
         </h2>
 
         <div className="mt-4 divide-y divide-[#E5E5E0]">
-          {CHAPTERS.map((chapter, i) => {
+          {ARTIFACT_ORDER.map((chapter, i) => {
             const present = artifactNames.has(chapter.artifact);
             return (
               <ChapterRow
