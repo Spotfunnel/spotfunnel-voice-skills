@@ -1,22 +1,17 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures";
 
 // Drag-select → Comment chip → composer → save → highlight persists.
 //
-// Setup: pre-seed localStorage so the OperatorNameGate doesn't intercept.
-// Cleanup: best-effort delete via Supabase REST after the test. A leftover
-// row would only show up as a stale highlight in dev — acceptable for M6.
+// localStorage seed for OperatorNameGate is provided by ./fixtures.
+// No automated cleanup yet — leftover rows are author_name='playwright'
+// and easy to clean via SQL. M7 follow-up: add an afterEach that deletes
+// by author_name + comment text.
 
 const TARGET_SENTENCE =
   "This is the brain doc body for the test-roster customer.";
 const COMMENT_TEXT = "M6 e2e test annotation";
 
 test.describe("annotation flow", () => {
-  test.beforeEach(async ({ context }) => {
-    await context.addInitScript(() => {
-      window.localStorage.setItem("operatorName", "playwright");
-    });
-  });
-
   test("drag-select, comment, save, highlight persists across reload", async ({
     page,
   }) => {

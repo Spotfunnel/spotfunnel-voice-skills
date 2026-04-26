@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -169,9 +169,10 @@ export function ArtifactReader({
   );
 
   // After react-markdown finishes rendering (and on every annotations change),
-  // walk the article and overlay <mark> elements. useLayoutEffect to avoid a
-  // visible flash between unmarked and marked render passes.
-  useEffect(() => {
+  // walk the article and overlay <mark> elements. useLayoutEffect runs before
+  // browser paint, avoiding the visible flash between unmarked and marked
+  // render passes that useEffect would produce.
+  useLayoutEffect(() => {
     const root = rootRef.current;
     if (!root) return;
     applyHighlights(root, liveAnnotations);
@@ -212,10 +213,20 @@ export function ArtifactReader({
     if (!popover || popover.kind !== "composer") return;
     const trimmed = comment.trim();
     if (!trimmed) return;
-    const authorName =
-      (typeof window !== "undefined" &&
-        window.localStorage.getItem("operatorName")) ||
-      "anonymous";
+
+    // Author name MUST come from the OperatorNameGate (which populates
+    // localStorage). Falling through silently to "anonymous" would pollute
+    // the audit trail M7+ relies on. If the gate didn't run, refuse to save
+    // and surface the error so the user is rerouted through the gate.
+    const stored =
+      typeof window !== "undefined"
+        ? window.localStorage.getItem("operatorName")
+        : null;
+    const authorName = stored?.trim();
+    if (!authorName) {
+      setError("Operator name missing — please refresh the page to set your name.");
+      return;
+    }
 
     setSaving(true);
     setError(null);
@@ -241,6 +252,8 @@ export function ArtifactReader({
     setPopover(null);
     setComment("");
     // Refresh server props so the new annotation joins the rendered overlay.
+    // M7 follow-up: switch to optimistic insert + targeted annotations refetch
+    // so we don't re-fetch customer + run + artifact for one new row.
     router.refresh();
   }
 

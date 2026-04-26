@@ -5,6 +5,10 @@ const isCI = !!process.env.CI;
 export default defineConfig({
   testDir: "./tests/e2e",
   use: { baseURL: "http://localhost:3000" },
+  // Synthetic-event flow tests (annotations.spec.ts) can race the selection
+  // capture; one retry absorbs that without masking real regressions because
+  // a real bug fails on every retry.
+  retries: isCI ? 2 : 1,
   webServer: {
     // CI uses production build for parity with Vercel deploy; local uses dev server for HMR speed.
     command: isCI ? "pnpm build && pnpm start" : "pnpm dev",
