@@ -120,16 +120,22 @@ alter role service_role set pgrst.db_schemas = 'public,graphql_public,operator_u
 -- Role grants so PostgREST can resolve names through to actual tables.
 grant usage on schema operator_ui to anon, authenticated, service_role;
 
--- anon + authenticated: CRUD via RLS (policies above are permissive; tighten as needed).
-grant select, insert, update, delete on all tables in schema operator_ui to anon, authenticated;
-grant usage, select on all sequences in schema operator_ui to anon, authenticated;
-
 -- service_role: full bypass (used by the local Python skill via service-role key).
+-- Skill-side writes to customers, runs, artifacts, verifications all go through this role.
 grant all on all tables in schema operator_ui to service_role;
 grant usage, select, update on all sequences in schema operator_ui to service_role;
 
+-- anon (browser, gated by Vercel password): can READ everything, but only WRITE
+-- to annotations + feedback (the operator-edited tables). Skill-managed tables
+-- (customers, runs, artifacts, verifications, lessons) are read-only from the browser.
+grant select on all tables in schema operator_ui to anon, authenticated;
+grant insert, update, delete on operator_ui.annotations to anon, authenticated;
+grant insert, update, delete on operator_ui.feedback to anon, authenticated;
+grant usage, select on all sequences in schema operator_ui to anon, authenticated;
+
 -- Default privileges so any tables/sequences added later inherit these grants.
-alter default privileges in schema operator_ui grant select, insert, update, delete on tables to anon, authenticated;
+-- New tables default to read-only for anon/authenticated (write access must be granted explicitly).
+alter default privileges in schema operator_ui grant select on tables to anon, authenticated;
 alter default privileges in schema operator_ui grant all on tables to service_role;
 alter default privileges in schema operator_ui grant usage, select on sequences to anon, authenticated;
 alter default privileges in schema operator_ui grant usage, select, update on sequences to service_role;
