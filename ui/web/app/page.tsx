@@ -1,12 +1,6 @@
 import { getServerSupabase } from "@/lib/supabase-server";
 import { CustomerCard } from "@/components/CustomerCard";
-
-type CustomerRow = {
-  id: string;
-  slug: string;
-  name: string;
-  created_at: string;
-};
+import type { Customer } from "@/lib/types";
 
 export default async function Home() {
   const supabase = await getServerSupabase();
@@ -19,7 +13,7 @@ export default async function Home() {
     throw new Error(`Failed to load customers: ${error.message}`);
   }
 
-  const customers: CustomerRow[] = data ?? [];
+  const customers: Customer[] = data ?? [];
 
   if (customers.length === 0) {
     return (

@@ -1,10 +1,5 @@
 import Link from "next/link";
-
-type Customer = {
-  slug: string;
-  name: string;
-  created_at: string;
-};
+import type { Customer } from "@/lib/types";
 
 export function CustomerCard({ customer }: { customer: Customer }) {
   return (
