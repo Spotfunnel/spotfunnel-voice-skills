@@ -16,7 +16,6 @@
     "react": "latest",
     "react-dom": "latest",
     "react-markdown": "latest",
-    "rehype-raw": "latest",
     "remark-gfm": "latest"
   },
   "devDependencies": {

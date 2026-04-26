@@ -46,9 +46,10 @@ export default async function ArtifactPage({
   }
   const customer = customerRow as Customer;
 
+  // Narrow select: state isn't read on this page (see M4 review note).
   const { data: runRow, error: runError } = await supabase
     .from("runs")
-    .select("id, customer_id, started_at, stage_complete, state")
+    .select("id, customer_id, started_at, stage_complete")
     .eq("customer_id", customer.id)
     .order("started_at", { ascending: false })
     .limit(1)
@@ -60,46 +61,52 @@ export default async function ArtifactPage({
   if (!runRow) {
     notFound();
   }
-  const run = runRow as Run;
+  const run = runRow as Pick<Run, "id" | "customer_id" | "started_at" | "stage_complete">;
 
-  // Fetch the requested artifact's content.
-  const { data: artifactRow, error: artifactError } = await supabase
-    .from("artifacts")
-    .select("artifact_name, content")
-    .eq("run_id", run.id)
-    .eq("artifact_name", artifact)
-    .maybeSingle();
+  // Fetch the requested artifact's content + the full artifact roster (for
+  // footer iteration) in parallel — both share `run_id` and don't depend on
+  // each other.
+  const [artifactRes, rosterRes] = await Promise.all([
+    supabase
+      .from("artifacts")
+      .select("artifact_name, content")
+      .eq("run_id", run.id)
+      .eq("artifact_name", artifact)
+      .maybeSingle(),
+    supabase
+      .from("artifacts")
+      .select("artifact_name")
+      .eq("run_id", run.id),
+  ]);
 
-  if (artifactError) {
-    throw new Error(`Failed to load artifact: ${artifactError.message}`);
+  if (artifactRes.error) {
+    throw new Error(`Failed to load artifact: ${artifactRes.error.message}`);
   }
-  if (!artifactRow) {
+  if (!artifactRes.data) {
     notFound();
   }
-  const content = (artifactRow.content as string) ?? "";
+  const content = artifactRes.data.content as string;
 
-  // Find the chapter title + the next chapter that actually has an artifact
-  // row. We need the full artifact roster for this run to know what's next.
-  const { data: rosterRows, error: rosterError } = await supabase
-    .from("artifacts")
-    .select("artifact_name")
-    .eq("run_id", run.id);
-  if (rosterError) {
-    throw new Error(`Failed to load artifact roster: ${rosterError.message}`);
+  if (rosterRes.error) {
+    throw new Error(`Failed to load artifact roster: ${rosterRes.error.message}`);
   }
   const presentNames = new Set<string>(
-    (rosterRows ?? []).map((r) => r.artifact_name as string),
+    (rosterRes.data ?? []).map((r) => r.artifact_name as string),
   );
 
-  const currentIndex = ARTIFACT_ORDER.findIndex((c) => c.artifact === artifact);
-  // Defensive: allowlist guarantees this is >= 0 but TS doesn't know that.
-  const currentChapter = ARTIFACT_ORDER[currentIndex];
+  // Find the current chapter via name lookup (allowlist guarantees it exists).
+  const currentChapter = ARTIFACT_ORDER.find((c) => c.artifact === artifact);
+  if (!currentChapter) notFound(); // unreachable given allowlist; satisfies TS.
+  const currentIndex = ARTIFACT_ORDER.indexOf(currentChapter);
+
+  // Footer semantics: link to the next chapter that ACTUALLY has an artifact
+  // row, not the next slot in ARTIFACT_ORDER. So if a customer has only
+  // brain-doc + discovery-prompt (system-prompt missing), brain-doc's footer
+  // points at discovery-prompt rather than dead-linking to a 404.
   const nextChapter =
-    currentIndex >= 0
-      ? ARTIFACT_ORDER.slice(currentIndex + 1).find((c) =>
-          presentNames.has(c.artifact),
-        ) ?? null
-      : null;
+    ARTIFACT_ORDER.slice(currentIndex + 1).find((c) =>
+      presentNames.has(c.artifact),
+    ) ?? null;
 
   return (
     <main className="min-h-screen p-12 bg-[#FAFAF7] text-[#1A1A1A]">
