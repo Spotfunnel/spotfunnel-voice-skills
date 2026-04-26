@@ -107,3 +107,33 @@ create index artifacts_run_name_idx on operator_ui.artifacts(run_id, artifact_na
 create index annotations_run_status_idx on operator_ui.annotations(run_id, status);
 create index feedback_status_created_idx on operator_ui.feedback(status, created_at);
 create index lessons_promoted_created_idx on operator_ui.lessons(promoted_to_prompt, created_at);
+
+-- ====== PostgREST exposure ======
+-- Supabase's PostgREST only exposes `public` and `graphql_public` by default.
+-- Add operator_ui to the exposed schema list per role so the REST API serves it.
+alter role authenticator set pgrst.db_schemas = 'public,graphql_public,operator_ui';
+alter role anon set pgrst.db_schemas = 'public,graphql_public,operator_ui';
+alter role authenticated set pgrst.db_schemas = 'public,graphql_public,operator_ui';
+alter role service_role set pgrst.db_schemas = 'public,graphql_public,operator_ui';
+
+-- ====== Grants ======
+-- Role grants so PostgREST can resolve names through to actual tables.
+grant usage on schema operator_ui to anon, authenticated, service_role;
+
+-- anon + authenticated: CRUD via RLS (policies above are permissive; tighten as needed).
+grant select, insert, update, delete on all tables in schema operator_ui to anon, authenticated;
+grant usage, select on all sequences in schema operator_ui to anon, authenticated;
+
+-- service_role: full bypass (used by the local Python skill via service-role key).
+grant all on all tables in schema operator_ui to service_role;
+grant usage, select, update on all sequences in schema operator_ui to service_role;
+
+-- Default privileges so any tables/sequences added later inherit these grants.
+alter default privileges in schema operator_ui grant select, insert, update, delete on tables to anon, authenticated;
+alter default privileges in schema operator_ui grant all on tables to service_role;
+alter default privileges in schema operator_ui grant usage, select on sequences to anon, authenticated;
+alter default privileges in schema operator_ui grant usage, select, update on sequences to service_role;
+
+-- Reload PostgREST so the changes take effect immediately.
+notify pgrst, 'reload config';
+notify pgrst, 'reload schema';
