@@ -22,3 +22,4 @@ packages = []
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = ["integration: tests that hit live external services (Supabase, etc.)"]

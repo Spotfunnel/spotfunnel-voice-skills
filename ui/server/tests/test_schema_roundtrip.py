@@ -50,6 +50,7 @@ def _customers_url(base: str) -> str:
     return f"{base.rstrip('/')}/rest/v1/customers"
 
 
+@pytest.mark.integration
 def test_customers_roundtrip_insert_read_delete():
     """Insert -> read -> delete -> verify-deleted on operator_ui.customers."""
     base, key = _require_env()
