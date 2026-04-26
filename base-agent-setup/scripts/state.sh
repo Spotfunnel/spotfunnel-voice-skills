@@ -3,7 +3,7 @@
 #
 # Per-run state helpers for resumability across the /base-agent flow.
 #
-# DUAL BACKEND (Phase 4 / M8) — gated by USE_SUPABASE_BACKEND:
+# DUAL BACKEND (Phase 4 / M8 + M9) — gated by USE_SUPABASE_BACKEND:
 #
 #   USE_SUPABASE_BACKEND=0 (default, unset)
 #     Legacy local-file backend. State lives at:
@@ -17,7 +17,10 @@
 #     runs/{slug_with_ts}/) so SKILL.md's existing `$STATE_RUN_DIR/...` paths
 #     keep working for curl outputs, intermediate JSON, scrape pages, etc.
 #     STATE_RUN_ID holds the slug_with_ts identifier — used by stage scripts
-#     that POST to operator_ui.artifacts.
+#     that POST to operator_ui.artifacts. When STATE_RUN_ID isn't set (e.g.
+#     SKILL.md captures `state_init` via $() so the export is lost in the
+#     subshell), DB calls derive it from `basename "$STATE_RUN_DIR"` since
+#     run dirs are named runs/{slug_with_ts}.
 #     Requires SUPABASE_OPERATOR_URL + SUPABASE_OPERATOR_SERVICE_ROLE_KEY.
 #
 # Both backends expose the same six functions with the same return shapes,
@@ -154,13 +157,16 @@ if not isinstance(d, list) or len(d) != 1 or "id" not in d[0]:
     # path in BOTH backends so SKILL.md's `$STATE_RUN_DIR/brain-doc.md` etc.
     # keep working. The Supabase run identifier is exposed separately as
     # STATE_RUN_ID (used by stage scripts that POST to operator_ui.artifacts).
+    # Echo the run dir path (matching legacy contract) so SKILL.md's
+    # `RUN_DIR=$(state_init "$SLUG"); export STATE_RUN_DIR="$RUN_DIR"` pattern
+    # produces a valid filesystem path under both backends.
     local runs_root run_dir
     runs_root="$(_state_resolve_runs_root)"
     run_dir="$runs_root/${slug_with_ts}"
     mkdir -p "$run_dir"
     export STATE_RUN_DIR="$run_dir"
     export STATE_RUN_ID="$slug_with_ts"
-    echo "$slug_with_ts"
+    echo "$run_dir"
     return 0
   fi
 
@@ -199,14 +205,21 @@ _state_path() {
 
 # Internal (Supabase): return the slug_with_ts identifier for the active run.
 # This is the value used in PostgREST URL filters (runs?slug_with_ts=eq.<id>).
-# Post-C1 contract: STATE_RUN_DIR is a filesystem path, STATE_RUN_ID is the
-# slug_with_ts. Always use STATE_RUN_ID for DB lookups.
+# Prefers STATE_RUN_ID; falls back to basename(STATE_RUN_DIR) since run dirs
+# are named runs/{slug_with_ts}. The fallback handles SKILL.md's $() capture
+# pattern, where state_init's exports get lost in the subshell but the caller
+# preserves STATE_RUN_DIR.
 _state_supabase_run_id() {
-  if [ -z "${STATE_RUN_ID:-}" ]; then
-    echo "STATE_RUN_ID not set — call state_init or state_resume_from first" >&2
-    return 1
+  if [ -n "${STATE_RUN_ID:-}" ]; then
+    echo "$STATE_RUN_ID"
+    return 0
   fi
-  echo "$STATE_RUN_ID"
+  if [ -n "${STATE_RUN_DIR:-}" ]; then
+    basename "$STATE_RUN_DIR"
+    return 0
+  fi
+  echo "STATE_RUN_DIR/STATE_RUN_ID not set — call state_init or state_resume_from first" >&2
+  return 1
 }
 
 # --- state_set -----------------------------------------------------------
@@ -387,6 +400,75 @@ PY
 # Back-compat alias used in the implementation plan's verify step.
 state_set_stage_complete() {
   state_stage_complete "$@"
+}
+
+# --- state_set_artifact --------------------------------------------------
+# state_set_artifact <artifact_name> <file_path>
+#   Legacy:   no-op (the file on disk is the canonical store).
+#   Supabase: upsert (run_id, artifact_name) into operator_ui.artifacts with
+#             content from the file. size_bytes is computed server-side
+#             style — we send the byte count.
+# Idempotent — re-calling with the same artifact_name updates the row.
+# Used by SKILL.md after each artifact write so the operator UI sees the
+# latest version of brain-doc / system-prompt / discovery-prompt / etc.
+state_set_artifact() {
+  local name="$1"
+  local path="$2"
+  if [ -z "$name" ] || [ -z "$path" ]; then
+    echo "state_set_artifact: name + file path required" >&2
+    return 1
+  fi
+  if [ ! -f "$path" ]; then
+    echo "state_set_artifact: file not found at $path" >&2
+    return 1
+  fi
+
+  if ! _state_use_supabase; then
+    return 0
+  fi
+
+  _state_load_supabase
+  local slug_with_ts run_id size body
+  slug_with_ts="$(_state_supabase_run_id)" || return 1
+
+  # Resolve run_id from slug_with_ts.
+  run_id="$(supabase_get "runs?slug_with_ts=eq.${slug_with_ts}&select=id" \
+    | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d[0]["id"] if d else "")')"
+  if [ -z "$run_id" ]; then
+    echo "state_set_artifact: run not found for $slug_with_ts" >&2
+    return 1
+  fi
+
+  size="$(wc -c < "$path" | tr -d ' ')"
+
+  # Build body via Python so embedded newlines, quotes, backslashes, and
+  # leading-dash content are JSON-encoded safely.
+  body="$(python3 - "$run_id" "$name" "$path" "$size" <<'PY'
+import json, sys
+run_id, name, path, size = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4])
+with open(path, "r", encoding="utf-8") as f:
+    content = f.read()
+print(json.dumps({
+    "run_id": run_id,
+    "artifact_name": name,
+    "content": content,
+    "size_bytes": size,
+}))
+PY
+)"
+
+  # PostgREST upsert via on_conflict on the unique (run_id, artifact_name).
+  # Prefer: resolution=merge-duplicates merges row updates instead of 409.
+  curl --ssl-no-revoke -sS -X POST \
+    -H "apikey: $SUPABASE_OPERATOR_SERVICE_ROLE_KEY" \
+    -H "Authorization: Bearer $SUPABASE_OPERATOR_SERVICE_ROLE_KEY" \
+    -H "Accept-Profile: $SUPABASE_OPERATOR_SCHEMA" \
+    -H "Content-Profile: $SUPABASE_OPERATOR_SCHEMA" \
+    -H "Content-Type: application/json" \
+    -H "Prefer: return=representation,resolution=merge-duplicates" \
+    -d "$body" \
+    "$SUPABASE_OPERATOR_URL/rest/v1/artifacts?on_conflict=run_id,artifact_name" \
+    >/dev/null
 }
 
 # --- state_get_next_stage ------------------------------------------------

@@ -111,6 +111,7 @@ The meeting transcript can be long — write it to a file rather than as a state
 ```bash
 printf '%s\n' "$MEETING_TRANSCRIPT" > "$STATE_RUN_DIR/meeting-transcript.md"
 state_set meeting_transcript_path "$STATE_RUN_DIR/meeting-transcript.md"
+state_set_artifact meeting-transcript "$STATE_RUN_DIR/meeting-transcript.md"
 ```
 
 Mark the stage complete:
@@ -118,6 +119,8 @@ Mark the stage complete:
 ```bash
 state_stage_complete 1 "{\"slug\": \"$SLUG\", \"website\": \"$WEBSITE\"}"
 ```
+
+`state_set_artifact` is a no-op when `USE_SUPABASE_BACKEND` is unset (legacy file backend). When the Supabase backend is on, it upserts the file's content into `operator_ui.artifacts` so the operator UI can read it.
 
 ### Halt conditions
 
@@ -168,6 +171,7 @@ Mark the stage complete:
 
 ```bash
 PAGES_SCRAPED="$(ls "$STATE_RUN_DIR/scrape/pages" | wc -l)"
+state_set_artifact scraped-pages "$STATE_RUN_DIR/scrape/combined.md"
 state_stage_complete 2 "{\"pages\": $PAGES_SCRAPED}"
 ```
 
@@ -209,6 +213,7 @@ Mark the stage complete:
 
 ```bash
 SIZE="$(wc -c < "$STATE_RUN_DIR/brain-doc.md")"
+state_set_artifact brain-doc "$STATE_RUN_DIR/brain-doc.md"
 state_stage_complete 3 "{\"size_bytes\": $SIZE}"
 ```
 
@@ -272,6 +277,7 @@ Mark the stage complete:
 
 ```bash
 SIZE="$(wc -c < "$STATE_RUN_DIR/system-prompt.md")"
+state_set_artifact system-prompt "$STATE_RUN_DIR/system-prompt.md"
 state_stage_complete 4 "{\"size_bytes\": $SIZE}"
 ```
 
@@ -664,6 +670,10 @@ Cover email:        1,180 words,  8 KB → runs/acme-plumbing-.../cover-email.md
 Mark the stage complete:
 
 ```bash
+state_set_artifact discovery-prompt "$STATE_RUN_DIR/discovery-prompt.md"
+state_set_artifact cover-email "$STATE_RUN_DIR/cover-email.md"
+# Customer-context only exists on the two-file path.
+[ -f "$STATE_RUN_DIR/customer-context.md" ] && state_set_artifact customer-context "$STATE_RUN_DIR/customer-context.md"
 state_stage_complete 10 "{\"size_path\": \"two-file\", \"discovery_chars\": $CHARS}"
 ```
 
