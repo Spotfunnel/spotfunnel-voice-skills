@@ -2,13 +2,14 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Annotation } from "@/lib/types";
+import { relativeTime, truncate } from "@/lib/format";
 
-type Filter = "open" | "resolved" | "deleted";
+export type RailFilter = "open" | "resolved" | "deleted";
 
 type Props = {
   annotations: Annotation[]; // ALL annotations on this artifact, all statuses
-  filter: Filter;
-  onFilterChange: (f: Filter) => void;
+  filter: RailFilter;
+  onFilterChange: (f: RailFilter) => void;
   onUpdate: (id: string, patch: Partial<Annotation>) => Promise<void>;
   onDelete: (id: string) => Promise<void>; // soft-delete (status='deleted')
   onClose: () => void;
@@ -17,28 +18,10 @@ type Props = {
   onScrollToHighlight: (id: string) => void;
 };
 
-function relativeTime(iso: string): string {
-  const then = new Date(iso).getTime();
-  const now = Date.now();
-  const sec = Math.max(0, Math.round((now - then) / 1000));
-  if (sec < 60) return "just now";
-  const min = Math.round(sec / 60);
-  if (min < 60) return `${min}m ago`;
-  const hr = Math.round(min / 60);
-  if (hr < 24) return `${hr}h ago`;
-  const d = Math.round(hr / 24);
-  if (d < 30) return `${d}d ago`;
-  return new Date(iso).toLocaleDateString();
-}
-
-function truncate(s: string, n: number): string {
-  return s.length > n ? s.slice(0, n) + "..." : s;
-}
-
 // Map an annotation's stored status to a rail filter bucket. "orphan" rides
 // alongside "open" because the rail's user-facing buckets are the operator's
 // mental model (open / resolved / deleted), not the storage model.
-function bucketOf(a: Annotation): Filter {
+function bucketOf(a: Annotation): RailFilter {
   if (a.status === "resolved") return "resolved";
   if (a.status === "deleted") return "deleted";
   return "open";
@@ -73,18 +56,22 @@ export function AnnotationRail({
 
   // Buckets present so we can decide whether to render the filter pills.
   const buckets = useMemo(() => {
-    const set = new Set<Filter>();
+    const set = new Set<RailFilter>();
     for (const a of annotations) set.add(bucketOf(a));
     return set;
   }, [annotations]);
 
-  // Show the pill row only when there's at least one annotation in a bucket
-  // that ISN'T the currently selected filter. (Per spec: "only rendered when
-  // ≥1 annotation in non-current status exists".)
+  // Show the pill row whenever there's any annotation at all AND either
+  // (a) the current bucket is empty (so the operator needs a way out), or
+  // (b) there's at least one annotation in a non-current bucket. This
+  // prevents stranding on an empty bucket — e.g. operator deletes the last
+  // open annotation while filter='deleted' is selected.
   const showPills = useMemo(() => {
+    if (annotations.length === 0) return false;
+    if (filtered.length === 0) return true;
     for (const b of buckets) if (b !== filter) return true;
     return false;
-  }, [buckets, filter]);
+  }, [annotations.length, filtered.length, buckets, filter]);
 
   // Scroll the focused item into view whenever highlightId changes.
   const itemRefs = useRef<Map<string, HTMLLIElement>>(new Map());
@@ -339,7 +326,7 @@ export function AnnotationRail({
           className="px-5 py-3 border-t border-[#E5E5E0] flex items-center gap-2 text-xs"
           data-testid="annotation-rail-filters"
         >
-          {(["open", "resolved", "deleted"] as Filter[]).map((f) => {
+          {(["open", "resolved", "deleted"] as RailFilter[]).map((f) => {
             const active = f === filter;
             return (
               <button

@@ -7,7 +7,8 @@ import remarkGfm from "remark-gfm";
 import { browserSupabase } from "@/lib/supabase-browser";
 import { captureSelection, type AnnotationAnchor } from "@/lib/highlight";
 import type { Annotation } from "@/lib/types";
-import { AnnotationRail } from "@/components/AnnotationRail";
+import { AnnotationRail, type RailFilter } from "@/components/AnnotationRail";
+import { relativeTime, truncate } from "@/lib/format";
 
 type Props = {
   content: string;
@@ -22,32 +23,12 @@ type PopoverState =
   | { kind: "composer"; anchor: AnnotationAnchor; rect: DOMRect }
   | null;
 
-type RailFilter = "open" | "resolved" | "deleted";
-
 // Highlight color: warm yellow at 60% opacity so prose underneath stays
 // readable. Matches the M6 spec (#FFF1A8 @ 60%).
 const HIGHLIGHT_BG = "rgba(255, 241, 168, 0.6)";
 // Resolved opacity: keep mark visible (so reviewers can still see what was
 // commented on) but obviously dimmed. 30% per M7 spec.
 const HIGHLIGHT_BG_RESOLVED = "rgba(255, 241, 168, 0.18)"; // ~30% of base
-
-function relativeTime(iso: string): string {
-  const then = new Date(iso).getTime();
-  const now = Date.now();
-  const sec = Math.max(0, Math.round((now - then) / 1000));
-  if (sec < 60) return "just now";
-  const min = Math.round(sec / 60);
-  if (min < 60) return `${min}m ago`;
-  const hr = Math.round(min / 60);
-  if (hr < 24) return `${hr}h ago`;
-  const d = Math.round(hr / 24);
-  if (d < 30) return `${d}d ago`;
-  return new Date(iso).toLocaleDateString();
-}
-
-function truncate(s: string, n: number): string {
-  return s.length > n ? s.slice(0, n) + "..." : s;
-}
 
 // Post-render DOM walker: iterates text nodes inside `root` and wraps any
 // substring that overlaps an annotation range in a <mark>. Idempotent —
@@ -157,13 +138,11 @@ function applyHighlights(
           const sel = window.getSelection();
           if (sel && !sel.isCollapsed) {
             const r = sel.getRangeAt(0);
-            // If the live selection actually contains characters from this
-            // mark, the user is selecting, not clicking. Bail.
-            if (
-              !r.collapsed &&
-              r.toString().length > 0 &&
-              mark.contains(r.startContainer)
-            ) {
+            // If the live selection intersects this mark in any direction
+            // (starts inside, ends inside, or spans across), the user is
+            // selecting, not clicking. Bail. Range.intersectsNode catches
+            // start-inside, end-inside, and fully-overlapping cases.
+            if (r.toString().length > 0 && r.intersectsNode(mark)) {
               return;
             }
           }
@@ -353,8 +332,19 @@ export function ArtifactReader({
     return { top, left };
   }
 
+  // Map an annotation status to its rail bucket. Mirror of bucketOf in the
+  // rail — duplicated here to keep the rail's bucket logic encapsulated.
+  function statusToBucket(s: Annotation["status"]): RailFilter {
+    if (s === "resolved") return "resolved";
+    if (s === "deleted") return "deleted";
+    return "open";
+  }
+
   // Rail handlers — PATCH the annotation row, then router.refresh() to pull
   // the new state. Same pattern as M6's insert; M14 will swap to optimistic.
+  // If the mutated annotation was the focused one and its new status moves
+  // it out of the current rail filter, clear focus to avoid a phantom focus
+  // ring on a re-rendered row that the user can't see.
   const handleUpdate = useCallback(
     async (id: string, patch: Partial<Annotation>) => {
       const { error: updErr } = await browserSupabase
@@ -368,9 +358,16 @@ export function ArtifactReader({
         console.error("annotation update failed", updErr);
         return;
       }
+      if (
+        id === focusedAnnotationId &&
+        patch.status &&
+        statusToBucket(patch.status) !== railFilter
+      ) {
+        setFocusedAnnotationId(null);
+      }
       router.refresh();
     },
-    [router],
+    [router, focusedAnnotationId, railFilter],
   );
 
   const handleDelete = useCallback(
@@ -384,9 +381,12 @@ export function ArtifactReader({
         console.error("annotation delete failed", delErr);
         return;
       }
+      if (id === focusedAnnotationId && railFilter !== "deleted") {
+        setFocusedAnnotationId(null);
+      }
       router.refresh();
     },
-    [router],
+    [router, focusedAnnotationId, railFilter],
   );
 
   // Scroll prose to a specific highlight when its rail row is clicked.
