@@ -197,13 +197,16 @@ _state_path() {
   echo "$STATE_RUN_DIR/state.json"
 }
 
-# Internal (Supabase): require STATE_RUN_DIR to be a slug_with_ts.
+# Internal (Supabase): return the slug_with_ts identifier for the active run.
+# This is the value used in PostgREST URL filters (runs?slug_with_ts=eq.<id>).
+# Post-C1 contract: STATE_RUN_DIR is a filesystem path, STATE_RUN_ID is the
+# slug_with_ts. Always use STATE_RUN_ID for DB lookups.
 _state_supabase_run_id() {
-  if [ -z "${STATE_RUN_DIR:-}" ]; then
-    echo "STATE_RUN_DIR not set — call state_init or state_resume_from first" >&2
+  if [ -z "${STATE_RUN_ID:-}" ]; then
+    echo "STATE_RUN_ID not set — call state_init or state_resume_from first" >&2
     return 1
   fi
-  echo "$STATE_RUN_DIR"
+  echo "$STATE_RUN_ID"
 }
 
 # --- state_set -----------------------------------------------------------

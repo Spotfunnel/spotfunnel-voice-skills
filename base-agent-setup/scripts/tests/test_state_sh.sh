@@ -65,18 +65,18 @@ curl --ssl-no-revoke -sS -X DELETE \
   >/dev/null || true
 
 echo "[1/6] state_init $TEST_SLUG"
-slug_with_ts="$(state_init "$TEST_SLUG")"
-if [[ -z "$slug_with_ts" ]]; then
-  echo "  [FAIL] state_init returned empty"; exit 1
+# Run state_init directly (not via $(...)) so its `export STATE_RUN_DIR` and
+# `export STATE_RUN_ID` propagate to this shell. We capture the printed slug
+# from the function's stdout via a fd-3 redirect.
+state_init "$TEST_SLUG" >/dev/null
+if [[ -z "${STATE_RUN_ID:-}" ]]; then
+  echo "  [FAIL] state_init did not export STATE_RUN_ID"; exit 1
 fi
-if [[ "$slug_with_ts" != "${TEST_SLUG}-"* ]]; then
-  echo "  [FAIL] expected slug-with-ts to start with '${TEST_SLUG}-', got '$slug_with_ts'"; exit 1
+if [[ "$STATE_RUN_ID" != "${TEST_SLUG}-"* ]]; then
+  echo "  [FAIL] expected STATE_RUN_ID to start with '${TEST_SLUG}-', got '$STATE_RUN_ID'"; exit 1
 fi
-echo "  [PASS] init -> $slug_with_ts"
-
-# state_init's export happens in a subshell when called via $(...). Re-export
-# it so the rest of the script sees it (matches the legacy self-test pattern).
-export STATE_RUN_DIR="$slug_with_ts"
+slug_with_ts="$STATE_RUN_ID"
+echo "  [PASS] init -> $slug_with_ts (STATE_RUN_DIR=$STATE_RUN_DIR)"
 
 echo "[2/6] state_set customer_name 'Test M8'"
 state_set "customer_name" "Test M8"
@@ -101,12 +101,12 @@ fi
 echo "  [PASS] next stage is 4"
 
 echo "[6/6] state_resume_from $TEST_SLUG"
-unset STATE_RUN_DIR
-resumed="$(state_resume_from "$TEST_SLUG")"
-if [[ "$resumed" != "$slug_with_ts" ]]; then
-  echo "  [FAIL] expected '$slug_with_ts', got '$resumed'"; exit 1
+unset STATE_RUN_DIR STATE_RUN_ID
+state_resume_from "$TEST_SLUG" >/dev/null
+if [[ "${STATE_RUN_ID:-}" != "$slug_with_ts" ]]; then
+  echo "  [FAIL] expected STATE_RUN_ID='$slug_with_ts', got '${STATE_RUN_ID:-}'"; exit 1
 fi
-echo "  [PASS] resume_from matched"
+echo "  [PASS] resume_from matched ($STATE_RUN_ID)"
 
 echo ""
 echo "All M8 assertions passed."
