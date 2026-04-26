@@ -29,6 +29,26 @@ export type Artifact = {
   content: string;
 };
 
+// Mirrors operator_ui.annotations. Includes anchor fields (quote/prefix/suffix
+// + char offsets) — three-strategy anchor so highlights can survive content
+// edits between runs (M7+ orphan recovery; M6 just renders by char offset).
+export type Annotation = {
+  id: string;
+  run_id: string;
+  artifact_name: string;
+  quote: string;
+  prefix: string;
+  suffix: string;
+  char_start: number;
+  char_end: number;
+  comment: string;
+  status: "open" | "resolved" | "orphan" | "deleted";
+  author_name: string;
+  created_at: string;
+  resolved_by_run_id: string | null;
+  resolved_classification: "per-run" | "feedback" | null;
+};
+
 // Canonical chapter order for the 6 artifact-backed slots. Index drives
 // chapter numbering on the customer page (M4) and "Next:" footer logic on
 // the reading-mode page (M5). `scraped-pages` is intentionally NOT here —

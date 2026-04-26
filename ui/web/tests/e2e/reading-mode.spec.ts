@@ -1,5 +1,12 @@
 import { test, expect } from "@playwright/test";
 
+test.beforeEach(async ({ context }) => {
+  // Bypass the OperatorNameGate (M6) so we can render pages directly.
+  await context.addInitScript(() => {
+    window.localStorage.setItem("operatorName", "playwright");
+  });
+});
+
 test("reading mode renders artifact markdown with header + footer nav", async ({ page }) => {
   await page.goto("/c/test-roster/brain-doc");
 
