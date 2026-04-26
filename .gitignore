@@ -20,6 +20,8 @@ Thumbs.db
 node_modules/
 __pycache__/
 .pytest_cache/
+.venv/
+*.egg-info/
 
 # Temp dirs created by skill scripts
 .tmp-*/

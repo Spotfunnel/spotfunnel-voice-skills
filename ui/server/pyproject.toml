@@ -1,0 +1,24 @@
+[project]
+name = "operator-ui-server"
+version = "0.0.1"
+description = "ZeroOnboarding Operator UI server (Python). Talks to Supabase operator_ui schema."
+requires-python = ">=3.11"
+dependencies = [
+    "httpx>=0.27",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+# No source package yet — tests-only scaffold for Phase 1 Milestone 1.
+packages = []
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
