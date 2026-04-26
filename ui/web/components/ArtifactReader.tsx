@@ -7,11 +7,13 @@ import remarkGfm from "remark-gfm";
 import { browserSupabase } from "@/lib/supabase-browser";
 import { captureSelection, type AnnotationAnchor } from "@/lib/highlight";
 import type { Annotation } from "@/lib/types";
+import { AnnotationRail } from "@/components/AnnotationRail";
 
 type Props = {
   content: string;
   runId: string;
   artifactName: string;
+  chapterName: string;
   annotations: Annotation[];
 };
 
@@ -20,9 +22,14 @@ type PopoverState =
   | { kind: "composer"; anchor: AnnotationAnchor; rect: DOMRect }
   | null;
 
+type RailFilter = "open" | "resolved" | "deleted";
+
 // Highlight color: warm yellow at 60% opacity so prose underneath stays
 // readable. Matches the M6 spec (#FFF1A8 @ 60%).
 const HIGHLIGHT_BG = "rgba(255, 241, 168, 0.6)";
+// Resolved opacity: keep mark visible (so reviewers can still see what was
+// commented on) but obviously dimmed. 30% per M7 spec.
+const HIGHLIGHT_BG_RESOLVED = "rgba(255, 241, 168, 0.18)"; // ~30% of base
 
 function relativeTime(iso: string): string {
   const then = new Date(iso).getTime();
@@ -48,7 +55,15 @@ function truncate(s: string, n: number): string {
 // this in useEffect instead of during react-markdown render because that
 // path needs a mutable cursor across components, which violates React's
 // pure-render contract (StrictMode double-renders trip it).
-function applyHighlights(root: HTMLElement, annotations: Annotation[]) {
+//
+// M7: resolved annotations render dimmed (still clickable to open the rail).
+// Deleted annotations are skipped here entirely — they only appear inside
+// the rail under the "deleted" filter.
+function applyHighlights(
+  root: HTMLElement,
+  annotations: Annotation[],
+  onMarkClick: (id: string) => void,
+) {
   // Tear down previous marks: replace each <mark data-annotation-id> with
   // its text content, then merge adjacent text nodes via normalize().
   const stale = root.querySelectorAll("mark[data-annotation-id]");
@@ -58,17 +73,14 @@ function applyHighlights(root: HTMLElement, annotations: Annotation[]) {
   });
   root.normalize();
 
-  if (annotations.length === 0) return;
+  // Filter out deleted before doing any DOM work. Resolved are kept (dimmed).
+  const renderable = annotations.filter((a) => a.status !== "deleted");
+  if (renderable.length === 0) return;
 
-  const sorted = [...annotations].sort((a, b) => a.char_start - b.char_start);
+  const sorted = [...renderable].sort((a, b) => a.char_start - b.char_start);
 
-  // Walk text nodes, tracking absolute offset in the running textContent.
-  // For each annotation overlapping the current node's [offset, offset+len),
-  // split the text node and wrap the slice.
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
     acceptNode(n) {
-      // Skip text already inside a <mark> we're about to add — shouldn't
-      // happen on the second pass because we tore them down, but defensive.
       let p: Node | null = n.parentNode;
       while (p && p !== root) {
         if (
@@ -83,8 +95,6 @@ function applyHighlights(root: HTMLElement, annotations: Annotation[]) {
     },
   });
 
-  // Materialize the list first because mutation during walking confuses the
-  // walker.
   const textNodes: Text[] = [];
   let cur: Node | null = walker.nextNode();
   while (cur) {
@@ -99,14 +109,11 @@ function applyHighlights(root: HTMLElement, annotations: Annotation[]) {
     const nodeEnd = offset + len;
     offset = nodeEnd;
 
-    // Find every annotation overlapping [nodeStart, nodeEnd).
     const overlaps = sorted.filter(
       (a) => a.char_end > nodeStart && a.char_start < nodeEnd,
     );
     if (overlaps.length === 0) continue;
 
-    // Compute non-overlapping intra-node ranges, each tagged with at most
-    // one annotation (the first that contains the segment).
     const cuts = new Set<number>([0, len]);
     for (const a of overlaps) {
       cuts.add(Math.max(0, a.char_start - nodeStart));
@@ -114,7 +121,6 @@ function applyHighlights(root: HTMLElement, annotations: Annotation[]) {
     }
     const sortedCuts = [...cuts].sort((x, y) => x - y);
 
-    // Build replacement nodes in order.
     const parent = node.parentNode;
     if (!parent) continue;
     const replacement = document.createDocumentFragment();
@@ -131,12 +137,39 @@ function applyHighlights(root: HTMLElement, annotations: Annotation[]) {
       if (ann) {
         const mark = document.createElement("mark");
         mark.setAttribute("data-annotation-id", ann.id);
-        mark.style.backgroundColor = HIGHLIGHT_BG;
+        mark.setAttribute("data-annotation-status", ann.status);
+        const isResolved = ann.status === "resolved";
+        mark.style.backgroundColor = isResolved
+          ? HIGHLIGHT_BG_RESOLVED
+          : HIGHLIGHT_BG;
         mark.style.borderRadius = "2px";
         mark.style.padding = "0 2px";
-        mark.style.cursor = "default";
+        mark.style.cursor = "pointer";
         mark.title = `${truncate(ann.comment, 60)} — ${ann.author_name}, ${relativeTime(ann.created_at)}`;
         mark.textContent = text;
+        // Click opens the rail focused on this annotation. We bind a closure
+        // here rather than rely on event delegation so multiple rebuilds
+        // don't double-fire. Skip the click if the user is in the middle of
+        // a text selection (mouseup with non-collapsed selection inside the
+        // mark) — that path is for creating a NEW annotation overlapping an
+        // existing one, not opening the rail.
+        mark.addEventListener("click", (ev) => {
+          const sel = window.getSelection();
+          if (sel && !sel.isCollapsed) {
+            const r = sel.getRangeAt(0);
+            // If the live selection actually contains characters from this
+            // mark, the user is selecting, not clicking. Bail.
+            if (
+              !r.collapsed &&
+              r.toString().length > 0 &&
+              mark.contains(r.startContainer)
+            ) {
+              return;
+            }
+          }
+          ev.stopPropagation();
+          onMarkClick(ann.id);
+        });
         replacement.appendChild(mark);
       } else {
         replacement.appendChild(document.createTextNode(text));
@@ -150,6 +183,7 @@ export function ArtifactReader({
   content,
   runId,
   artifactName,
+  chapterName,
   annotations,
 }: Props) {
   const router = useRouter();
@@ -159,33 +193,61 @@ export function ArtifactReader({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Sort + filter annotations once per prop change.
-  const liveAnnotations = useMemo(
+  // Rail state: closed by default. Opens via `A` keypress or clicking a mark.
+  const [railOpen, setRailOpen] = useState(false);
+  const [railFilter, setRailFilter] = useState<RailFilter>("open");
+  const [focusedAnnotationId, setFocusedAnnotationId] = useState<string | null>(
+    null,
+  );
+
+  // Annotations to render as <mark> in the prose: open/orphan always, plus
+  // resolved (dimmed). Deleted are skipped inside applyHighlights.
+  const renderableAnnotations = useMemo(
     () =>
       [...annotations].filter(
-        (a) => a.status === "open" || a.status === "orphan",
+        (a) =>
+          a.status === "open" ||
+          a.status === "orphan" ||
+          a.status === "resolved",
       ),
     [annotations],
   );
 
-  // After react-markdown finishes rendering (and on every annotations change),
-  // walk the article and overlay <mark> elements. useLayoutEffect runs before
-  // browser paint, avoiding the visible flash between unmarked and marked
-  // render passes that useEffect would produce.
+  // Keep a ref of latest annotations so the mark click closure can resolve
+  // status without itself depending on the prop (which would force rebuild).
+  const annotationsRef = useRef<Annotation[]>(annotations);
+  useEffect(() => {
+    annotationsRef.current = annotations;
+  }, [annotations]);
+
+  // Click-on-mark handler — kept stable so rebuilds don't churn listeners.
+  // Resolves the latest status via annotationsRef so the closure stays fresh.
+  const onMarkClick = useCallback((id: string) => {
+    const ann = annotationsRef.current.find((a) => a.id === id);
+    if (!ann) return;
+    setFocusedAnnotationId(id);
+    setRailFilter(
+      ann.status === "resolved"
+        ? "resolved"
+        : ann.status === "deleted"
+          ? "deleted"
+          : "open",
+    );
+    setRailOpen(true);
+  }, []);
+
   useLayoutEffect(() => {
     const root = rootRef.current;
     if (!root) return;
-    applyHighlights(root, liveAnnotations);
-  }, [liveAnnotations, content]);
+    applyHighlights(root, renderableAnnotations, onMarkClick);
+  }, [renderableAnnotations, content, onMarkClick]);
 
   const onMouseUp = useCallback(() => {
     const root = rootRef.current;
     if (!root) return;
-    // Defer one tick so the browser finalizes the selection (Safari quirk).
     requestAnimationFrame(() => {
       const anchor = captureSelection(root);
       if (!anchor) {
-        // Don't clobber an open composer with an empty selection event.
         if (popover?.kind !== "composer") setPopover(null);
         return;
       }
@@ -196,28 +258,51 @@ export function ArtifactReader({
     });
   }, [popover]);
 
-  // Esc cancels composer/chip; document-level so it works regardless of focus.
+  // Document-level keyboard handlers:
+  // - Esc: clear composer/chip first; if none, close the rail.
+  // - 'a' / 'A': toggle rail UNLESS the user is typing in an input/textarea/
+  //   contenteditable. We deliberately don't gate on focus inside the rail
+  //   itself for the open path — but DO gate so the rail's own textarea (in
+  //   edit mode) doesn't toggle when the operator types 'a'.
   useEffect(() => {
+    function isTypingTarget(t: EventTarget | null): boolean {
+      if (!(t instanceof HTMLElement)) return false;
+      const tag = t.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA") return true;
+      if (t.isContentEditable) return true;
+      return false;
+    }
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape") {
-        setPopover(null);
-        setComment("");
-        setError(null);
+        if (popover) {
+          setPopover(null);
+          setComment("");
+          setError(null);
+          return;
+        }
+        if (railOpen) {
+          setRailOpen(false);
+          setFocusedAnnotationId(null);
+          return;
+        }
+        return;
+      }
+      if (e.key === "a" || e.key === "A") {
+        if (e.ctrlKey || e.metaKey || e.altKey) return;
+        if (isTypingTarget(e.target)) return;
+        e.preventDefault();
+        setRailOpen((v) => !v);
       }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [popover, railOpen]);
 
   async function save() {
     if (!popover || popover.kind !== "composer") return;
     const trimmed = comment.trim();
     if (!trimmed) return;
 
-    // Author name MUST come from the OperatorNameGate (which populates
-    // localStorage). Falling through silently to "anonymous" would pollute
-    // the audit trail M7+ relies on. If the gate didn't run, refuse to save
-    // and surface the error so the user is rerouted through the gate.
     const stored =
       typeof window !== "undefined"
         ? window.localStorage.getItem("operatorName")
@@ -251,9 +336,6 @@ export function ArtifactReader({
     }
     setPopover(null);
     setComment("");
-    // Refresh server props so the new annotation joins the rendered overlay.
-    // M7 follow-up: switch to optimistic insert + targeted annotations refetch
-    // so we don't re-fetch customer + run + artifact for one new row.
     router.refresh();
   }
 
@@ -264,13 +346,62 @@ export function ArtifactReader({
     }
   }
 
-  // Position the popover above the selection rect, clamped to viewport.
   function popoverPos(rect: DOMRect): { top: number; left: number } {
     const pad = 8;
     const top = window.scrollY + rect.top - 40 - pad;
     const left = window.scrollX + rect.left + rect.width / 2;
     return { top, left };
   }
+
+  // Rail handlers — PATCH the annotation row, then router.refresh() to pull
+  // the new state. Same pattern as M6's insert; M14 will swap to optimistic.
+  const handleUpdate = useCallback(
+    async (id: string, patch: Partial<Annotation>) => {
+      const { error: updErr } = await browserSupabase
+        .from("annotations")
+        .update(patch)
+        .eq("id", id);
+      if (updErr) {
+        // Surface to console — rail itself doesn't have an error slot yet.
+        // M14 follow-up: per-row error state with retry.
+        // eslint-disable-next-line no-console
+        console.error("annotation update failed", updErr);
+        return;
+      }
+      router.refresh();
+    },
+    [router],
+  );
+
+  const handleDelete = useCallback(
+    async (id: string) => {
+      const { error: delErr } = await browserSupabase
+        .from("annotations")
+        .update({ status: "deleted" })
+        .eq("id", id);
+      if (delErr) {
+        // eslint-disable-next-line no-console
+        console.error("annotation delete failed", delErr);
+        return;
+      }
+      router.refresh();
+    },
+    [router],
+  );
+
+  // Scroll prose to a specific highlight when its rail row is clicked.
+  // Marks for deleted annotations don't exist in the DOM, so this is a no-op
+  // when filter='deleted' — that's fine, scroll-to has no meaning there.
+  const onScrollToHighlight = useCallback((id: string) => {
+    const root = rootRef.current;
+    if (!root) return;
+    const mark = root.querySelector(
+      `mark[data-annotation-id="${id}"]`,
+    ) as HTMLElement | null;
+    if (mark) {
+      mark.scrollIntoView({ block: "center", behavior: "smooth" });
+    }
+  }, []);
 
   return (
     <>
@@ -287,7 +418,6 @@ export function ArtifactReader({
         <button
           type="button"
           onMouseDown={(e) => {
-            // Prevent the click from clearing the selection before we read it.
             e.preventDefault();
           }}
           onClick={() => {
@@ -353,6 +483,23 @@ export function ArtifactReader({
             Ctrl+Enter to save · Esc to cancel
           </div>
         </div>
+      ) : null}
+
+      {railOpen ? (
+        <AnnotationRail
+          annotations={annotations}
+          filter={railFilter}
+          onFilterChange={setRailFilter}
+          onUpdate={handleUpdate}
+          onDelete={handleDelete}
+          onClose={() => {
+            setRailOpen(false);
+            setFocusedAnnotationId(null);
+          }}
+          chapterName={chapterName}
+          highlightId={focusedAnnotationId}
+          onScrollToHighlight={onScrollToHighlight}
+        />
       ) : null}
     </>
   );

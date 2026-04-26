@@ -63,8 +63,9 @@ export default async function ArtifactPage({
   const run = runRow as Pick<Run, "id" | "customer_id" | "started_at" | "stage_complete">;
 
   // Fetch artifact + roster + annotations in parallel — all share `run_id`
-  // and don't depend on each other. Annotations are filtered to live states
-  // (open/orphan); resolved/deleted are excluded from the rendered overlay.
+  // and don't depend on each other. M7: pass ALL annotations regardless of
+  // status — ArtifactReader filters internally so the rail can show
+  // resolved/deleted via filter pills. The mark overlay still skips deleted.
   const [artifactRes, rosterRes, annotationsRes] = await Promise.all([
     supabase
       .from("artifacts")
@@ -83,7 +84,6 @@ export default async function ArtifactPage({
       )
       .eq("run_id", run.id)
       .eq("artifact_name", artifact)
-      .in("status", ["open", "orphan"])
       .order("char_start", { ascending: true }),
   ]);
 
@@ -140,6 +140,7 @@ export default async function ArtifactPage({
         content={content}
         runId={run.id}
         artifactName={artifact}
+        chapterName={currentChapter.name}
         annotations={annotations}
       />
 
