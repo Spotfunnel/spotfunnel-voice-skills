@@ -41,11 +41,20 @@ else
   RESP="$(supabase_get "feedback?customer_id=eq.${CUSTOMER_ID}&status=eq.open&select=id,customer_id,artifact_name,quote,comment&order=created_at.asc")"
 fi
 
-python3 -c '
+# Stage RESP to a temp file then pass the path to python — Windows ARG_MAX
+# (~32K) gets hit fast once the feedback table has accumulated rows across
+# many customers, so we cannot pass the JSON as argv.
+TMP_BASE="${TMPDIR:-$HOME/.tmp-spotfunnel-skills}"
+mkdir -p "$TMP_BASE"
+RESP_TMP="$(mktemp -p "$TMP_BASE" cluster-feedback.XXXXXX)"
+trap 'rm -f "$RESP_TMP"' EXIT
+printf '%s' "$RESP" > "$RESP_TMP"
+python3 - "$RESP_TMP" <<'PY'
 import json, sys
 from collections import defaultdict
 
-rows = json.loads(sys.argv[1] or "[]")
+with open(sys.argv[1], "r", encoding="utf-8") as f:
+    rows = json.loads(f.read() or "[]")
 clusters = defaultdict(list)
 for r in rows:
     art = (r.get("artifact_name") or "").strip().lower()
@@ -75,4 +84,4 @@ for key, items in clusters.items():
         "customer_ids": cust_ids,
     }
     print(json.dumps(out, ensure_ascii=False))
-' "$RESP"
+PY
