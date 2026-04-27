@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import { OperatorNameGate } from "@/components/OperatorNameGate";
+import { CommandPalette } from "@/components/CommandPalette";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -23,6 +24,7 @@ export default function RootLayout({
     <html lang="en" className={inter.variable}>
       <body className="font-sans bg-[#FAFAF7] text-[#1A1A1A] antialiased">
         <OperatorNameGate>{children}</OperatorNameGate>
+        <CommandPalette />
       </body>
     </html>
   );

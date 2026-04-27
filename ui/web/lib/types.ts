@@ -14,6 +14,9 @@ export type Run = {
   customer_id: string;
   started_at: string;
   stage_complete: number;
+  // M12: when a refine is launched off a prior run, the new run row keeps
+  // the source run id here so the UI can show the lineage.
+  refined_from_run_id?: string | null;
   // jsonb — shape varies per pipeline stage. Only fields the UI reads are
   // typed; everything else stays unknown so we don't lie about presence.
   state: {
@@ -22,6 +25,25 @@ export type Run = {
     scrape_pages_count?: number;
     [key: string]: unknown;
   };
+};
+
+// Mirrors operator_ui.verifications. summary is the {pass, fail, skip} jsonb;
+// checks is the per-check array. Inspect view (M20) reads only the latest
+// row per run.
+export type VerificationSummary = {
+  pass?: number;
+  fail?: number;
+  skip?: number;
+  [key: string]: unknown;
+};
+
+export type Verification = {
+  id: string;
+  run_id: string;
+  verified_at: string;
+  summary: VerificationSummary;
+  checks: unknown;
+  created_at: string;
 };
 
 export type Artifact = {

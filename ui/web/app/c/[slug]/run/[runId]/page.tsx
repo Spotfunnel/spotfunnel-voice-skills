@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getServerSupabase } from "@/lib/supabase-server";
 import { ChapterRow } from "@/components/ChapterRow";
@@ -14,7 +15,6 @@ import {
 const TOTAL_STAGES = 11;
 
 function formatRunDate(iso: string): string {
-  // Stable across server/client (no locale surprises): "25 Apr 2026".
   const d = new Date(iso);
   const day = d.getUTCDate();
   const month = d.toLocaleString("en-GB", { month: "short", timeZone: "UTC" });
@@ -22,12 +22,15 @@ function formatRunDate(iso: string): string {
   return `${day} ${month} ${year}`;
 }
 
-export default async function CustomerPage({
+// Run-scoped customer page (M18). Same chapter roster as /c/{slug} but for a
+// specific run id, so operators can browse refine ancestors without losing
+// the per-run annotations + artifacts.
+export default async function RunScopedCustomerPage({
   params,
 }: {
-  params: Promise<{ slug: string }>;
+  params: Promise<{ slug: string; runId: string }>;
 }) {
-  const { slug } = await params;
+  const { slug, runId } = await params;
   const supabase = await getServerSupabase();
 
   const { data: customerRow, error: customerError } = await supabase
@@ -35,83 +38,74 @@ export default async function CustomerPage({
     .select("id, slug, name, created_at")
     .eq("slug", slug)
     .maybeSingle();
-
   if (customerError) {
     throw new Error(`Failed to load customer: ${customerError.message}`);
   }
-  if (!customerRow) {
-    notFound();
-  }
+  if (!customerRow) notFound();
   const customer = customerRow as Customer;
 
-  // Latest run for this customer.
   const { data: runRow, error: runError } = await supabase
     .from("runs")
     .select("id, customer_id, started_at, stage_complete, state, refined_from_run_id")
+    .eq("id", runId)
     .eq("customer_id", customer.id)
-    .order("started_at", { ascending: false })
-    .limit(1)
     .maybeSingle();
-
   if (runError) {
-    throw new Error(`Failed to load latest run: ${runError.message}`);
+    throw new Error(`Failed to load run: ${runError.message}`);
   }
-  const run = (runRow ?? null) as Run | null;
+  if (!runRow) notFound();
+  const run = runRow as Run;
 
-  // Run history for the dropdown — same DB query the run-scoped page uses,
-  // extracted so both views show identical metadata.
   const runHistory = await loadRunHistory(
     supabase as unknown as Parameters<typeof loadRunHistory>[0],
     customer.id,
   );
 
-  // Artifact roster for the latest run. Pull only the names — content is M5.
   const artifactNames = new Set<string>();
-  if (run) {
-    const { data: artifactRows, error: artifactError } = await supabase
-      .from("artifacts")
-      .select("artifact_name")
-      .eq("run_id", run.id);
-    if (artifactError) {
-      throw new Error(`Failed to load artifacts: ${artifactError.message}`);
-    }
-    for (const row of artifactRows ?? []) {
-      artifactNames.add(row.artifact_name as string);
-    }
+  const { data: artifactRows, error: artifactError } = await supabase
+    .from("artifacts")
+    .select("artifact_name")
+    .eq("run_id", run.id);
+  if (artifactError) {
+    throw new Error(`Failed to load artifacts: ${artifactError.message}`);
+  }
+  for (const row of artifactRows ?? []) {
+    artifactNames.add(row.artifact_name as string);
   }
 
-  // Latest verification row (if any) for the latest run — drives the dot.
   let verificationSummary: VerificationSummary | null = null;
-  if (run) {
-    const { data: vRow, error: vError } = await supabase
-      .from("verifications")
-      .select("summary")
-      .eq("run_id", run.id)
-      .order("verified_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (vError) {
-      throw new Error(`Failed to load verification: ${vError.message}`);
-    }
-    if (vRow) {
-      verificationSummary = vRow.summary as VerificationSummary;
-    }
+  const { data: vRow, error: vError } = await supabase
+    .from("verifications")
+    .select("summary")
+    .eq("run_id", run.id)
+    .order("verified_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (vError) {
+    throw new Error(`Failed to load verification: ${vError.message}`);
   }
+  if (vRow) verificationSummary = vRow.summary as VerificationSummary;
 
-  const scrapeCount = run?.state?.scrape_pages_count;
+  const scrapeCount = run.state?.scrape_pages_count;
+  const isLatest = runHistory[0]?.id === run.id;
 
   return (
     <main className="min-h-screen p-12 bg-[#FAFAF7] text-[#1A1A1A]">
       <div className="max-w-2xl">
-        <h1 className="text-3xl font-medium">{customer.name}</h1>
+        <div className="text-sm text-[#6B6B6B]">
+          <Link
+            href={`/c/${customer.slug}`}
+            className="hover:text-[#1A1A1A] transition-colors"
+          >
+            ← {customer.name}
+          </Link>
+        </div>
+        <h1 className="mt-4 text-3xl font-medium">{customer.name}</h1>
         <hr className="mt-4 border-t border-[#E5E5E0]" />
-        {run ? (
-          <p className="mt-4 text-sm text-[#6B6B6B]">
-            Latest run · {formatRunDate(run.started_at)} · stage {run.stage_complete}/{TOTAL_STAGES}
-          </p>
-        ) : (
-          <p className="mt-4 text-sm text-[#6B6B6B]">No runs yet</p>
-        )}
+        <p className="mt-4 text-sm text-[#6B6B6B]" data-testid="run-scope-banner">
+          {isLatest ? "Latest run" : "Historical run"} ·{" "}
+          {formatRunDate(run.started_at)} · stage {run.stage_complete}/{TOTAL_STAGES}
+        </p>
 
         <h2 className="mt-12 text-xs uppercase tracking-widest text-[#6B6B6B]">
           Read
@@ -125,18 +119,21 @@ export default async function CustomerPage({
                 key={chapter.artifact}
                 number={i + 1}
                 name={chapter.name}
-                href={present ? `/c/${customer.slug}/${chapter.artifact}` : null}
-                // Annotations are M6+; render "—" until then.
+                href={
+                  present
+                    ? `/c/${customer.slug}/run/${run.id}/${chapter.artifact}`
+                    : null
+                }
                 annotationCount={null}
               />
             );
           })}
 
-          {/* Chapter 7: scraped pages — sourced from run.state, not artifacts. */}
           {typeof scrapeCount === "number" ? (
             <ChapterRow
               number={7}
               name={`Scraped pages (${scrapeCount})`}
+              // No run-scoped scraped-pages route yet; fall back to latest.
               href={`/c/${customer.slug}/scraped-pages`}
               annotationCount={null}
             />
@@ -155,7 +152,7 @@ export default async function CustomerPage({
         <RunHistorySwitcher
           slug={customer.slug}
           runs={runHistory}
-          activeRunId={run?.id ?? null}
+          activeRunId={run.id}
         />
       </div>
     </main>
