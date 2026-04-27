@@ -259,5 +259,14 @@ PY
 PAGES_WRITTEN="$(echo "$SUMMARY" | cut -f1)"
 CHARS_TOTAL="$(echo "$SUMMARY" | cut -f2)"
 
+# M23 Fix 4: zero-bytes is a hard halt. Previously the script wrote a 0-byte
+# combined.md and exited 0; downstream stages then synthesized a brain-doc
+# from nothing. Catch it here so the operator gets one clear actionable line
+# instead of a cascade of weird failures three stages later.
+if [ "$CHARS_TOTAL" -eq 0 ]; then
+  echo "[ERR] firecrawl-scrape: 0 chars extracted from $URL. Site may be JS-only or unreachable. Confirm the URL renders content with a real browser, then re-run /base-agent." >&2
+  exit 1
+fi
+
 echo "[OK] scraped $PAGES_WRITTEN pages, $CHARS_TOTAL chars total, written to $OUT_DIR"
 exit 0

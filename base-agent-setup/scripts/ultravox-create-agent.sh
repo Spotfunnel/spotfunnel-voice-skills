@@ -187,6 +187,85 @@ with open(payload_path, "w", encoding="utf-8") as f:
     json.dump(payload, f, indent=2)
 PY
 
+# M23 Fix 2: Orphan-agent guard. If a previous Stage 6 attempt POSTed
+# successfully but crashed before state.ultravox_agent_id was written,
+# Ultravox holds the agent and a resume would create a SECOND agent under
+# the same name. Cardinal-rule violation. Pre-flight: list agents and
+# short-circuit on a name match. Ultravox List Agents has no server-side
+# name filter (as of API v1), so we paginate client-side and exact-match.
+PRECHECK_FILE="$(mktemp)"
+trap 'rm -f "$PAYLOAD_FILE" "$RESP_FILE" "$PRECHECK_FILE"' EXIT
+
+echo "[INFO] precheck: scanning Ultravox for an existing agent named '$NAME'"
+EXISTING_AGENT_RESP="$(mktemp)"
+trap 'rm -f "$PAYLOAD_FILE" "$RESP_FILE" "$PRECHECK_FILE" "$EXISTING_AGENT_RESP"' EXIT
+
+# Paginate up to 5 pages (250 agents) — enough headroom for any practical
+# operator pool. If the operator has more, they should restructure naming.
+NEXT_CURSOR=""
+EXISTING_AGENT_ID=""
+EXISTING_FOUND_BODY=""
+PAGE=0
+MAX_PAGES=5
+while [ "$PAGE" -lt "$MAX_PAGES" ]; do
+  PAGE=$((PAGE + 1))
+  if [ -z "$NEXT_CURSOR" ]; then
+    URL="https://api.ultravox.ai/api/agents?pageSize=50"
+  else
+    URL="https://api.ultravox.ai/api/agents?pageSize=50&cursor=$NEXT_CURSOR"
+  fi
+  HTTP_CODE="$(curl --ssl-no-revoke -sS -o "$PRECHECK_FILE" -w "%{http_code}" \
+    -X GET "$URL" \
+    -H "X-API-Key: $ULTRAVOX_API_KEY" \
+    -H "Accept: application/json")"
+  if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
+    # Halt loudly — better to refuse to POST than to risk a duplicate agent.
+    # 404 is impossible here (the endpoint always exists); any non-2xx is a
+    # real error (auth, transport, throttle).
+    echo "[ERR] Ultravox precheck list-agents returned HTTP $HTTP_CODE — refusing to POST blindly" >&2
+    cat "$PRECHECK_FILE" >&2
+    echo >&2
+    exit 1
+  fi
+  HIT_INFO="$(NAME_IN="$NAME" python3 - "$PRECHECK_FILE" <<'PY'
+import json, os, sys
+name = os.environ["NAME_IN"]
+with open(sys.argv[1], "r", encoding="utf-8") as f:
+    body = json.load(f)
+results = body.get("results") or body.get("data") or []
+for r in results:
+    if r.get("name") == name:
+        # Print: <id>\t<full_json>
+        aid = r.get("agentId") or r.get("id") or ""
+        print(aid + "\t" + json.dumps(r))
+        sys.exit(0)
+# No hit on this page — print the next-cursor (may be empty).
+print("\t" + (body.get("nextCursor") or ""))
+PY
+  )"
+  EXISTING_AGENT_ID="$(printf '%s' "$HIT_INFO" | cut -f1)"
+  if [ -n "$EXISTING_AGENT_ID" ]; then
+    EXISTING_FOUND_BODY="$(printf '%s' "$HIT_INFO" | cut -f2-)"
+    break
+  fi
+  NEXT_CURSOR="$(printf '%s' "$HIT_INFO" | cut -f2-)"
+  if [ -z "$NEXT_CURSOR" ]; then
+    break
+  fi
+done
+
+OUT_PATH="$OUT_DIR/agent-created.json"
+
+if [ -n "$EXISTING_AGENT_ID" ]; then
+  echo "[WARN] Ultravox already has an agent named '$NAME' (id=$EXISTING_AGENT_ID)." >&2
+  echo "[WARN] This is likely a previous Stage 6 attempt that crashed before state was written. Re-using the existing agent." >&2
+  printf '%s\n' "$EXISTING_FOUND_BODY" > "$OUT_PATH"
+  AGENT_ID="$EXISTING_AGENT_ID"
+  echo "[OK] agent re-used (orphan guard): id=$AGENT_ID, name=$NAME"
+  echo "[INFO] response saved to $OUT_PATH"
+  exit 0
+fi
+
 echo "[INFO] POSTing https://api.ultravox.ai/api/agents"
 
 HTTP_CODE="$(curl --ssl-no-revoke -sS -o "$RESP_FILE" -w "%{http_code}" \
@@ -202,7 +281,6 @@ if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
   exit 1
 fi
 
-OUT_PATH="$OUT_DIR/agent-created.json"
 cp "$RESP_FILE" "$OUT_PATH"
 
 AGENT_ID="$(python3 - "$RESP_FILE" <<'PY'

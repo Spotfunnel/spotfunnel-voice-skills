@@ -280,21 +280,106 @@ def _check_voice_temperature(agent: dict | None, ref: dict | None) -> dict:
     )
 
 
-def _check_system_prompt(agent: dict | None) -> dict:
+def _fetch_latest_system_prompt_artifact(
+    op_url: str, op_key: str, run_id: str
+) -> str | None:
+    """Read the latest system-prompt artifact for a run from operator_ui.artifacts.
+
+    Returns the content string on success, None if the artifact doesn't
+    exist OR the fetch failed (the caller treats both as `skip` for
+    check 3 — we can't compare against an artifact we don't have).
+    """
+    if not (op_url and op_key and run_id):
+        return None
+    url = (
+        f"{op_url.rstrip('/')}/rest/v1/artifacts"
+        f"?run_id=eq.{urllib.parse.quote(run_id, safe='')}"
+        f"&artifact_name=eq.system-prompt"
+        f"&order=created_at.desc&limit=1"
+        f"&select=content"
+    )
+    try:
+        status, body = _http("GET", url, _op_headers(op_key))
+    except RuntimeError:
+        return None
+    if status >= 400 or not isinstance(body, list) or not body:
+        return None
+    content = body[0].get("content")
+    return content if isinstance(content, str) else None
+
+
+def _diff_summary(a: str, b: str, *, max_examples: int = 3) -> str:
+    """Compact diff description for two strings. Reports total mismatched
+    char count + first few example offsets. Cheap (no diffing library)."""
+    la, lb = len(a), len(b)
+    mismatch_count = 0
+    examples: list[int] = []
+    n = min(la, lb)
+    for i in range(n):
+        if a[i] != b[i]:
+            mismatch_count += 1
+            if len(examples) < max_examples:
+                examples.append(i)
+    # Length difference counts as additional mismatched chars.
+    mismatch_count += abs(la - lb)
+    parts = [f"len(artifact)={la}, len(live)={lb}, mismatched_chars={mismatch_count}"]
+    if examples:
+        parts.append(f"first diffs at offsets: {examples}")
+    return "; ".join(parts)
+
+
+def _check_system_prompt(
+    agent: dict | None,
+    *,
+    op_url: str = "",
+    op_key: str = "",
+    run_id: str = "",
+) -> dict:
+    """M23 Fix 6 — content equality, not just length floor.
+
+    Compares the live Ultravox agent's systemPrompt byte-for-byte against
+    the latest system-prompt artifact in operator_ui.artifacts for this
+    run. Detects prompt drift: e.g. operator runs `/base-agent refine`,
+    regenerates the system-prompt artifact, but forgets to push to live
+    Ultravox via scripts/regenerate-agent.sh.
+
+    Skip rules:
+      - agent fetch failed earlier (check 1 cascade)
+      - artifact not present (run pre-dates artifact mirroring, or never
+        wrote one) — we can't compare without both sides
+
+    Length-floor sanity is preserved: if the artifact is < 500 chars,
+    fail with "suspiciously short" — empty/short generations are bugs
+    even when they round-trip identically.
+    """
     started = time.monotonic()
-    cid = "system-prompt-non-empty"
-    title = "System prompt non-empty (>500 chars)"
+    cid = "system-prompt-matches-artifact"
+    title = "System prompt matches latest artifact (no drift)"
     if agent is None:
         return _result(cid, title, "skip", started, "agent fetch failed earlier")
-    sp = _agent_field(agent, "systemPrompt") or ""
-    if not isinstance(sp, str):
-        sp = str(sp)
-    n = len(sp)
-    if n > 500:
-        return _result(cid, title, "pass", started, f"systemPrompt is {n} chars")
+    live = _agent_field(agent, "systemPrompt") or ""
+    if not isinstance(live, str):
+        live = str(live)
+    artifact = _fetch_latest_system_prompt_artifact(op_url, op_key, run_id)
+    if artifact is None:
+        return _result(
+            cid, title, "skip", started,
+            "no system-prompt artifact in operator_ui.artifacts for this run",
+        )
+    if len(artifact) < 500:
+        return _result(
+            cid, title, "fail", started,
+            f"system-prompt artifact suspiciously short ({len(artifact)} chars) — possible empty generation",
+            remediation="bash scripts/regenerate-agent.sh <slug>",
+        )
+    if live == artifact:
+        return _result(
+            cid, title, "pass", started,
+            f"systemPrompt byte-equal to artifact ({len(artifact)} chars)",
+        )
     return _result(
         cid, title, "fail", started,
-        f"systemPrompt is {n} chars (need >500)",
+        "live agent systemPrompt differs from latest artifact (" + _diff_summary(artifact, live) + ")",
         remediation="bash scripts/regenerate-agent.sh <slug>",
     )
 
@@ -714,8 +799,10 @@ def run_verification(
     ref = _fetch_reference(ux_key)
     # 2
     checks.append(_check_voice_temperature(agent, ref))
-    # 3
-    checks.append(_check_system_prompt(agent))
+    # 3 — needs op_url + op_key + run_id to fetch the artifact for byte-compare.
+    checks.append(_check_system_prompt(
+        agent, op_url=op_url, op_key=op_key, run_id=run_row.get("id", "")
+    ))
     # 4
     checks.append(_check_tools_array(agent, ref))
     # 5
@@ -814,10 +901,10 @@ def main(argv: list[str] | None = None) -> int:
     if persist_failed:
         return 1
 
-    # Stage 11.5 contract: the SKILL.md hook uses `|| true`, so the exit
-    # code is advisory. We still reflect fail count in the exit code so
-    # the manual `/base-agent verify` invocation is informative when
-    # operators run it standalone.
+    # Stage 11.5 contract (M23): the SKILL.md hook reads this exit code
+    # to decide whether to print the success banner. exit 0 = pass/skip
+    # only (proceed); exit 2 = at least one fail (HALT the success banner).
+    # All-skip is exit 0 — skips never count against the run.
     return 0 if report["summary"]["fail"] == 0 else 2
 
 

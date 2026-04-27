@@ -341,6 +341,51 @@ PY
     exit 1
   fi
   rm -f "$TAG_RESP"
+
+  # M23 Fix 3 (Option C): contention guard. Two concurrent runs can both pick
+  # the same DID (the "list pool-available, pick first" step is racy) and both
+  # PATCH the same app — last write wins, the loser's customer gets the wrong
+  # AI on its number. Telnyx's tag-PATCH is read-modify-write without
+  # If-Match, so we can't lock at the API layer. Detect the race after-the-fact
+  # by re-GETting and checking that OUR `claimed-<slug>` tag is the ONLY
+  # `claimed-*` on this app. If a different `claimed-*` snuck in, we lost.
+  VERIFY_RESP="$(mktemp)"
+  HTTP_CODE="$(curl --ssl-no-revoke -sS -o "$VERIFY_RESP" -w "%{http_code}" \
+    -X GET "https://api.telnyx.com/v2/texml_applications/$APP_ID" \
+    -H "Authorization: Bearer $TELNYX_API_KEY")"
+  if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
+    echo "[ERR] Telnyx GET texml_applications post-PATCH returned HTTP $HTTP_CODE — race detection inconclusive" >&2
+    cat "$VERIFY_RESP" >&2
+    echo >&2
+    rm -f "$VERIFY_RESP"
+    exit 1
+  fi
+  RACE_RESULT="$(SLUG_IN="$CUSTOMER_SLUG" DID_IN="$DID" python3 - "$VERIFY_RESP" <<'PY'
+import json, os, sys
+slug = os.environ["SLUG_IN"]
+did = os.environ["DID_IN"]
+with open(sys.argv[1], "r", encoding="utf-8") as f:
+    body = json.load(f)
+data = body.get("data") or {}
+tags = data.get("tags") or []
+expected = f"claimed-{slug}"
+claimed_tags = [t for t in tags if isinstance(t, str) and t.startswith("claimed-")]
+if expected not in claimed_tags:
+    print(f"LOST\tour tag '{expected}' missing after PATCH (tags: {claimed_tags})")
+elif len(claimed_tags) > 1:
+    other = [t for t in claimed_tags if t != expected]
+    print(f"LOST\tanother claim landed on DID {did}: {other}")
+else:
+    print("OK")
+PY
+  )"
+  rm -f "$VERIFY_RESP"
+  RACE_STATUS="$(printf '%s' "$RACE_RESULT" | cut -f1)"
+  if [ "$RACE_STATUS" = "LOST" ]; then
+    RACE_DETAIL="$(printf '%s' "$RACE_RESULT" | cut -f2-)"
+    echo "[ERR] Race detected — another /base-agent run claimed DID $DID ($RACE_DETAIL). Re-run /base-agent for this customer; the DID pool will pick a different number." >&2
+    exit 1
+  fi
 fi
 
 # ----- Pool-low alert -----

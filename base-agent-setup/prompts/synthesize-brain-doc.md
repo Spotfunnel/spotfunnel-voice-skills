@@ -1,8 +1,12 @@
 # Brain-doc synthesis prompt
 
-## Before you generate
+## Active lessons + corrections (read first, treat as binding)
 
-Run `python3 scripts/fetch_lessons.py` from `base-agent-setup/`. Read every line of its output and treat it as binding. If the output is empty, proceed normally. The lessons reflect cross-customer corrections the operator has confirmed but not yet baked into this prompt — honor them.
+{{LESSONS_BLOCK}}
+
+{{CORRECTIONS_BLOCK}}
+
+The block above is populated deterministically by `scripts/compose-prompt.sh` at orchestration time — do not run `fetch_lessons.py` yourself; the composer already did. Empty `(no active lessons)` is normal. The `<corrections>` block, if present, lists operator-marked factual errors from a previous run that you must apply verbatim in this regeneration.
 
 > **Audience:** you, reading this at Stage 3 of the `/base-agent` skill.
 >

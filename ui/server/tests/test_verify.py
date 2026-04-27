@@ -178,12 +178,20 @@ def _texml_app(status_callback="https://hook.example.com/call-ended", voice_url=
     }
 
 
-def _all_routes_happy(extra: dict | None = None) -> dict:
+def _all_routes_happy(extra: dict | None = None, *, artifact_chars: int = 1000) -> dict:
     """Default route map for happy-path tests. Specific tests override
-    individual entries."""
+    individual entries.
+
+    M23: check 3 (system-prompt-matches-artifact) requires the live agent's
+    systemPrompt and the operator_ui.artifacts content to be byte-equal.
+    The fixture builds both from `_agent(system_prompt_chars=N)` and a
+    matching artifact row of length N. Specific tests override the artifact
+    row's content to test mismatch.
+    """
     OP = "https://op.test"
     DASH = "https://dash.test"
     N8N = "https://n8n.test"
+    artifact_content = "x" * artifact_chars
     routes: dict[str, list] = {
         # Operator UI Supabase: customer + run lookups
         f"GET {OP}/rest/v1/customers": [_FakeResp(200, [{"id": "cust-1"}])],
@@ -193,10 +201,13 @@ def _all_routes_happy(extra: dict | None = None) -> dict:
             "state": _state(),
             "stage_complete": 11,
         }])],
+        # M23 Fix 6: system-prompt artifact lookup (operator_ui.artifacts).
+        # Default returns the same content the live agent fixture has.
+        f"GET {OP}/rest/v1/artifacts": [_FakeResp(200, [{"content": artifact_content}])],
         # Persistence
         f"POST {OP}/rest/v1/verifications": [_FakeResp(201, [{"id": "v-1"}])],
         # Ultravox: agent + reference
-        f"GET https://api.ultravox.ai/api/agents/{AGENT_ID}": [_FakeResp(200, _agent())],
+        f"GET https://api.ultravox.ai/api/agents/{AGENT_ID}": [_FakeResp(200, _agent(system_prompt_chars=artifact_chars))],
         "GET https://api.ultravox.ai/api/agents/ref-agent": [_FakeResp(200, _ref_agent())],
         # Telnyx phone number + texml app
         "GET https://api.telnyx.com/v2/phone_numbers": [_FakeResp(200, _phone_number_row())],
@@ -244,7 +255,7 @@ def test_happy_path_all_ten_pass(monkeypatch):
     assert ids == [
         "ultravox-agent-exists",
         "ultravox-voice-temperature",
-        "system-prompt-non-empty",
+        "system-prompt-matches-artifact",
         "tools-array-matches",
         "telnyx-did-active",
         "telnyx-call-routing-wired",
@@ -275,7 +286,7 @@ def test_ultravox_404_fails_check_one_and_skips_dependents(monkeypatch):
     assert by_id["ultravox-agent-exists"]["status"] == "fail"
     assert "404" in by_id["ultravox-agent-exists"]["detail"]
     assert "ultravox-create-agent.sh" in by_id["ultravox-agent-exists"]["remediation"]
-    for cid in ("ultravox-voice-temperature", "system-prompt-non-empty", "tools-array-matches"):
+    for cid in ("ultravox-voice-temperature", "system-prompt-matches-artifact", "tools-array-matches"):
         assert by_id[cid]["status"] == "skip", by_id[cid]
 
 
@@ -316,8 +327,9 @@ def test_reference_agent_404_skips_checks_2_and_4(monkeypatch):
     by_id = {c["id"]: c for c in report["checks"]}
     assert by_id["ultravox-voice-temperature"]["status"] == "skip"
     assert by_id["tools-array-matches"]["status"] == "skip"
-    # Check 3 still passes — system prompt depends on the customer agent only.
-    assert by_id["system-prompt-non-empty"]["status"] == "pass"
+    # Check 3 still passes — system prompt depends on the customer agent
+    # plus the operator_ui artifact (both fetched fine in this test).
+    assert by_id["system-prompt-matches-artifact"]["status"] == "pass"
 
 
 def test_dashboard_table_404_skips_checks_8_and_9(monkeypatch):
@@ -408,10 +420,19 @@ def test_telnyx_did_inactive_fails(monkeypatch):
     assert "suspended" in by_id["telnyx-did-active"]["detail"]
 
 
-def test_system_prompt_too_short_fails(monkeypatch):
+def test_system_prompt_artifact_too_short_fails(monkeypatch):
+    """M23 Fix 6: artifact length floor preserved as a sanity check.
+    A < 500 char artifact (probably empty generation) should fail even
+    if the live agent matches it byte-for-byte."""
     _happy_env(monkeypatch)
     mod = _import_module()
     routes = _all_routes_happy()
+    # Both sides set to the same 42 chars — the byte-equal would pass, but
+    # the length floor catches the suspiciously-short artifact case.
+    short = "x" * 42
+    routes["GET https://op.test/rest/v1/artifacts"] = [
+        _FakeResp(200, [{"content": short}])
+    ]
     routes[f"GET https://api.ultravox.ai/api/agents/{AGENT_ID}"] = [
         _FakeResp(200, _agent(system_prompt_chars=42))
     ]
@@ -419,8 +440,44 @@ def test_system_prompt_too_short_fails(monkeypatch):
     with patch("verify_under_test.urllib.request.urlopen", fake):
         report, _ = mod.run_verification(SLUG)
     by_id = {c["id"]: c for c in report["checks"]}
-    assert by_id["system-prompt-non-empty"]["status"] == "fail"
-    assert "42 chars" in by_id["system-prompt-non-empty"]["detail"]
+    assert by_id["system-prompt-matches-artifact"]["status"] == "fail"
+    assert "suspiciously short" in by_id["system-prompt-matches-artifact"]["detail"]
+
+
+def test_system_prompt_content_mismatch_fails(monkeypatch):
+    """M23 Fix 6: live agent has the prompt content, but the latest artifact
+    in operator_ui.artifacts differs from it (e.g. operator regenerated the
+    artifact but forgot to push to live Ultravox via regenerate-agent.sh)."""
+    _happy_env(monkeypatch)
+    mod = _import_module()
+    routes = _all_routes_happy()
+    # Live agent has 1000 'x's; artifact has 1000 'y's. Same length, content
+    # differs everywhere — diff summary should report mismatched_chars==1000.
+    routes["GET https://op.test/rest/v1/artifacts"] = [
+        _FakeResp(200, [{"content": "y" * 1000}])
+    ]
+    fake, _calls = _router(routes)
+    with patch("verify_under_test.urllib.request.urlopen", fake):
+        report, _ = mod.run_verification(SLUG)
+    by_id = {c["id"]: c for c in report["checks"]}
+    chk = by_id["system-prompt-matches-artifact"]
+    assert chk["status"] == "fail"
+    assert "differs from latest artifact" in chk["detail"]
+    assert "regenerate-agent.sh" in chk["remediation"]
+
+
+def test_system_prompt_no_artifact_skips(monkeypatch):
+    """M23 Fix 6: skip when the operator_ui.artifacts row is absent
+    (legacy run that pre-dates artifact mirroring)."""
+    _happy_env(monkeypatch)
+    mod = _import_module()
+    routes = _all_routes_happy()
+    routes["GET https://op.test/rest/v1/artifacts"] = [_FakeResp(200, [])]
+    fake, _calls = _router(routes)
+    with patch("verify_under_test.urllib.request.urlopen", fake):
+        report, _ = mod.run_verification(SLUG)
+    by_id = {c["id"]: c for c in report["checks"]}
+    assert by_id["system-prompt-matches-artifact"]["status"] == "skip"
 
 
 def test_no_run_for_slug_raises(monkeypatch):
@@ -454,6 +511,9 @@ def test_cli_smoke_no_write_json(monkeypatch, tmp_path):
     routes_payload = {
         "customers": [{"id": "cust-1"}],
         "runs": [{"id": RUN_ID, "slug_with_ts": f"{SLUG}-x", "state": _state(), "stage_complete": 11}],
+        # M23 Fix 6: artifact must match the live agent's systemPrompt for
+        # check 3 (system-prompt-matches-artifact) to pass.
+        "artifacts": [{"content": "x" * 1000}],
         "agent": _agent(),
         "ref": _ref_agent(),
         "phone_numbers": _phone_number_row(),
@@ -481,6 +541,7 @@ def test_cli_smoke_no_write_json(monkeypatch, tmp_path):
         "    url = req.full_url\n"
         "    if '/customers' in url: return _R(200, ROUTES['customers'])\n"
         "    if '/runs' in url: return _R(200, ROUTES['runs'])\n"
+        "    if '/artifacts' in url: return _R(200, ROUTES['artifacts'])\n"
         "    if 'agents/' + AGENT_ID in url: return _R(200, ROUTES['agent'])\n"
         "    if 'agents/ref-agent' in url: return _R(200, ROUTES['ref'])\n"
         "    if 'phone_numbers' in url: return _R(200, ROUTES['phone_numbers'])\n"
@@ -629,6 +690,8 @@ def test_no_write_skips_persistence(live_run, monkeypatch):
             "state": {"ultravox_agent_id": "agent-x", "telnyx_did": "+61299990000"},
             "stage_complete": 11,
         }])],
+        # M23 Fix 6: empty artifacts → check 3 skips cleanly (no row to compare).
+        f"GET {base.rstrip('/')}/rest/v1/artifacts": [_FakeResp(200, [])],
     })
     # Other URLs (Ultravox, Telnyx, n8n, dashboard) — return URLError so
     # checks 1, 5 fail and the rest skip cleanly.

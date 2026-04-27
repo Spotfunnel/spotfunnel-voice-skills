@@ -195,7 +195,14 @@ The scrape directory is the resume marker. If `{run-dir}/scrape/combined.md` alr
 
 This stage runs **inline in your Claude Code conversation** — no API call, no script. Read the prompt and apply it.
 
-1. Read `prompts/synthesize-brain-doc.md` in full. It is the operating manual for this stage.
+1. Compose the prompt with the deterministic substitution helper, then read the composed file:
+
+   ```bash
+   bash scripts/compose-prompt.sh prompts/synthesize-brain-doc.md > /tmp/composed-brain-doc.md
+   ```
+
+   This bakes the active-lessons block (and an empty corrections block — see Step 6 of refine for the corrections-populated path) into the prompt at the `{{LESSONS_BLOCK}}` / `{{CORRECTIONS_BLOCK}}` placeholders. **Read `/tmp/composed-brain-doc.md` as the operating manual for this stage.**
+
 2. Read the three inputs:
    - `{run-dir}/scrape/combined.md` (from Stage 2).
    - `{run-dir}/meeting-transcript.md` (from Stage 1).
@@ -237,7 +244,14 @@ If `{run-dir}/brain-doc.md` already exists with a non-zero size, skip Stage 3 an
 
 Like Stage 3, this is an inline Claude pass — no API, no script.
 
-1. Read `prompts/assemble-rough-system-prompt.md` in full.
+1. Compose the prompt with the deterministic substitution helper, then read the composed file:
+
+   ```bash
+   bash scripts/compose-prompt.sh prompts/assemble-rough-system-prompt.md > /tmp/composed-system-prompt.md
+   ```
+
+   Read `/tmp/composed-system-prompt.md` as the operating manual for this stage. The lessons block is pre-substituted; you do not run `fetch_lessons.py`.
+
 2. Read the inputs the prompt requires:
    - `templates/universal-rules.md` — the canonical 16-rule base, verbatim.
    - `{run-dir}/brain-doc.md` — from Stage 3.
@@ -607,7 +621,14 @@ If `{run-dir}/telephony-wired.json` exists and its `texml_voice_url` matches the
 
 This is an inline Claude pass — like Stages 3 and 4.
 
-1. Read `prompts/generate-discovery-prompt.md` in full.
+1. Compose the prompt with the deterministic substitution helper, then read the composed file:
+
+   ```bash
+   bash scripts/compose-prompt.sh prompts/generate-discovery-prompt.md > /tmp/composed-discovery-prompt.md
+   ```
+
+   Read `/tmp/composed-discovery-prompt.md` as the operating manual for this stage. The lessons block is pre-substituted; you do not run `fetch_lessons.py`.
+
 2. Read the four inputs the prompt requires:
    - `{run-dir}/brain-doc.md` (Stage 3 output).
    - `{run-dir}/meeting-transcript.md` (Stage 1 input).
@@ -742,31 +763,38 @@ If `state_stage_complete 11` already ran (the state shows stage 11 done), Stage 
 
 ---
 
-## Stage 11.5 — Post-onboarding verification (advisory)
+## Stage 11.5 — Post-onboarding verification (HALTS success banner on fail)
 
 **Goal:** run 10 deterministic checks against the live agent, DID, and dashboard wiring. Surface drift before the operator's first test call.
 
-This stage is **advisory only**. Failures don't halt onboarding, don't roll back state, and don't block resume / handoff. The report lands in `operator_ui.verifications` keyed by the run id. Operators see a [PASS]/[FAIL]/[SKIP] summary; the operator UI's Inspect view (v2) will surface the same data.
+This stage **does not roll back** Stages 1–11 (the agent is live, the DID is claimed, the dashboard is wired). But a `fail` result here HALTS the Stage 11 success banner so the operator sees the failure before forwarding the cover email. Skips never halt — an all-skip case (operator running offline) still proceeds.
 
 ### What to do
 
-```bash
-python -m server.verify --slug "$SLUG" || true
-```
+Run verify and capture its exit code (do NOT swallow with `|| true`):
 
-The `|| true` is load-bearing: a failed check returns exit 2, but Stage 11 is already complete and the customer onboarding is done. We surface the report and move on.
+```bash
+python -m server.verify --slug "$SLUG"
+VERIFY_EXIT=$?
+```
 
 Run from `base-agent-setup/` so `python -m server.verify` resolves the module. From elsewhere:
 
 ```bash
-python base-agent-setup/server/verify.py --slug "$SLUG" || true
+python base-agent-setup/server/verify.py --slug "$SLUG"
+VERIFY_EXIT=$?
 ```
+
+Exit codes:
+- `0` = no fails (all pass or skip). Proceed to the Stage 11 success banner.
+- `2` = at least one check failed. **HALT the success banner.** Print a clear remediation block to the operator with the failed check's `detail` + `remediation` fields, then stop. Do not print the `✅ Rough agent live` block. The operator must address the failure (or explicitly acknowledge and re-run /base-agent — Stage 11.5 is replayable).
+- `1` = internal error (no run for slug, Supabase unreachable, etc.). HALT loudly.
 
 ### What gets checked
 
 1. Ultravox agent exists and live (state.ultravox_agent_id → GET /api/agents/{id})
 2. Voice + temperature match the operator's reference agent
-3. systemPrompt > 500 chars
+3. system-prompt-matches-artifact (live agent's systemPrompt is byte-equal to the latest system-prompt artifact for this run)
 4. selectedTools array length matches reference
 5. Telnyx DID is `active` (state.telnyx_did → GET /v2/phone_numbers)
 6. DID has a connection_id wired (TeXML app)
@@ -779,18 +807,18 @@ Each row carries `{id, title, status: pass|fail|skip, ms, detail, remediation?}`
 
 ### Skip vs fail
 
-- **Skip** = the check couldn't run (env missing, table not provisioned, reference agent unfetchable). Skips never count against the run.
-- **Fail** = the check ran and found a real problem. Surface verbatim; don't auto-fix.
+- **Skip** = the check couldn't run (env missing, table not provisioned, reference agent unfetchable). Skips never count against the run; an all-skip exit code is `0`.
+- **Fail** = the check ran and found a real problem. Surface verbatim; don't auto-fix; HALT the success banner.
 
 ### Resume note
 
-Stage 11.5 runs every time Stage 11 completes — including on resume. It's idempotent and read-only (except for the persistence write to `operator_ui.verifications`).
+Re-running `/base-agent <slug>` after fixing the failure cause is safe. `state.stage_complete=11` is already set, so Stages 1–11 short-circuit on resume. Stage 11.5 is a side-effect-free check (other than the persistence write into `operator_ui.verifications`), so it re-runs cleanly and prints the success banner once verify is green.
 
 ---
 
 ## Final output
 
-Once Stage 11 completes, print this block to the operator with state values substituted:
+Once Stage 11 AND Stage 11.5 both clear (verify exit 0 — pass/skip only, no fails), print this block to the operator with state values substituted. **If verify exited 2, do NOT print this block** — print the failure remediation block from Stage 11.5 instead.
 
 ```
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -967,24 +995,38 @@ mkdir -p "$STATE_RUN_DIR"
 
 ### Step 6 — Apply per-run patches
 
-For each artifact in the patch group, re-run the relevant inline generator prompt (`prompts/synthesize-brain-doc.md` for brain-doc, `prompts/assemble-rough-system-prompt.md` for system-prompt, `prompts/generate-discovery-prompt.md` for discovery-prompt + customer-context + cover-email). Inject the corrections at the top of the prompt as a `<correction>` block:
+For each artifact in the patch group, re-compose the relevant generator prompt with a corrections JSONL file, then re-run that composed prompt inline.
 
-```
-<correction>
-The operator marked these facts wrong in the previous run. Apply them verbatim:
-- Quote: "<quote-from-annotation>"
-  Correction: "<comment-from-annotation>"
-- ...
-</correction>
+First, write the corrections for each artifact to a JSONL file (one line per per-run-classified annotation, with `quote` + `comment` fields):
+
+```bash
+# Example: brain-doc has 2 per-run patches.
+cat > /tmp/refine-corrections-brain-doc.jsonl <<'JSONL'
+{"quote": "<quote-from-annotation-1>", "comment": "<comment-from-annotation-1>"}
+{"quote": "<quote-from-annotation-2>", "comment": "<comment-from-annotation-2>"}
+JSONL
 ```
 
-Write the regenerated artifact to `$STATE_RUN_DIR/<artifact>.md`, then mirror it to Supabase:
+Then compose:
+
+```bash
+bash scripts/compose-prompt.sh \
+  prompts/synthesize-brain-doc.md \
+  --corrections /tmp/refine-corrections-brain-doc.jsonl \
+  > /tmp/composed-brain-doc.md
+```
+
+The composer substitutes the `{{LESSONS_BLOCK}}` (active lessons) AND `{{CORRECTIONS_BLOCK}}` (formatted as a `<corrections>` block) at version-controlled placeholders inside the prompt. The LLM cannot "forget" the corrections — they are baked into the prompt body before you read it.
+
+Read `/tmp/composed-<artifact>.md` and run the inline generator. Write the regenerated artifact to `$STATE_RUN_DIR/<artifact>.md`, then mirror it to Supabase:
 
 ```bash
 source scripts/state.sh
 state_set_artifact brain-doc "$STATE_RUN_DIR/brain-doc.md"
 # ...repeat per regenerated artifact
 ```
+
+The mapping of artifact → prompt is the same as the fresh-run stages: brain-doc → `prompts/synthesize-brain-doc.md`, system-prompt → `prompts/assemble-rough-system-prompt.md`, discovery-prompt + customer-context + cover-email → `prompts/generate-discovery-prompt.md`. For artifacts with zero direct corrections (downstream cascades), pass an empty JSONL file or omit `--corrections`; the placeholder becomes empty and the regeneration is purely upstream-driven.
 
 ### Step 7 — Cascade downstream artifacts (only if Step 5 = Y)
 
