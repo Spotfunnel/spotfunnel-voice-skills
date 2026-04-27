@@ -102,20 +102,27 @@ export default async function CustomerPage({
   const scrapeCount = run?.state?.scrape_pages_count;
 
   return (
-    <main className="min-h-screen p-12 bg-[#FAFAF7] text-[#1A1A1A]">
+    <main className="min-h-screen px-8 py-20 sm:px-16 sm:py-24 bg-[#FAFAF7] text-[#1A1A1A]">
       <CommandPaletteHint />
-      <div className="max-w-2xl">
-        <h1 className="text-3xl font-medium">{customer.name}</h1>
-        <hr className="mt-4 border-t border-[#E5E5E0]" />
-        {run ? (
-          <p className="mt-4 text-sm text-[#6B6B6B]">
-            Latest run · {formatRunDate(run.started_at)} · stage {run.stage_complete}/{TOTAL_STAGES}
+      <div className="mx-auto max-w-3xl">
+        <header className="mb-16">
+          <h1 className="text-[44px] font-semibold tracking-tight leading-none">
+            {customer.name}
+          </h1>
+          <p className="mt-4 font-mono text-[12px] text-[#9A9A92]">
+            {customer.slug}
           </p>
-        ) : (
-          <p className="mt-4 text-sm text-[#6B6B6B]">No runs yet</p>
-        )}
+          {run ? (
+            <p className="mt-6 text-[13px] text-[#7A7A72]">
+              Latest run · {formatRunDate(run.started_at)} · stage{" "}
+              {run.stage_complete}/{TOTAL_STAGES}
+            </p>
+          ) : (
+            <p className="mt-6 text-[13px] text-[#7A7A72]">No runs yet</p>
+          )}
+        </header>
 
-        <h2 className="mt-12 text-xs uppercase tracking-widest text-[#6B6B6B]">
+        <h2 className="text-[11px] uppercase tracking-[0.18em] text-[#9A9A92] font-medium">
           Read
         </h2>
 

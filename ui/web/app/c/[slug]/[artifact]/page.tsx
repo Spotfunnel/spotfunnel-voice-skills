@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getServerSupabase } from "@/lib/supabase-server";
 import { ArtifactReader } from "@/components/ArtifactReader";
+import { DraftEmailButton } from "@/components/DraftEmailButton";
 import {
   ARTIFACT_ORDER,
   ARTIFACT_SLUGS,
@@ -66,7 +67,11 @@ export default async function ArtifactPage({
   // and don't depend on each other. M7: pass ALL annotations regardless of
   // status — ArtifactReader filters internally so the rail can show
   // resolved/deleted via filter pills. The mark overlay still skips deleted.
-  const [artifactRes, rosterRes, annotationsRes] = await Promise.all([
+  // When viewing the cover-email, also pull the customer-context body so the
+  // "Open in Gmail" button can attach it to the Gmail draft created via
+  // /api/email-draft → Spotfunnel n8n workflow.
+  const isCoverEmail = artifact === "cover-email";
+  const [artifactRes, rosterRes, annotationsRes, contextRes] = await Promise.all([
     supabase
       .from("artifacts")
       .select("artifact_name, content")
@@ -85,6 +90,14 @@ export default async function ArtifactPage({
       .eq("run_id", run.id)
       .eq("artifact_name", artifact)
       .order("char_start", { ascending: true }),
+    isCoverEmail
+      ? supabase
+          .from("artifacts")
+          .select("content")
+          .eq("run_id", run.id)
+          .eq("artifact_name", "customer-context")
+          .maybeSingle()
+      : Promise.resolve({ data: null, error: null }),
   ]);
 
   if (artifactRes.error) {
@@ -107,6 +120,12 @@ export default async function ArtifactPage({
   }
   const annotations = (annotationsRes.data ?? []) as Annotation[];
 
+  if (contextRes.error) {
+    throw new Error(`Failed to load customer-context: ${contextRes.error.message}`);
+  }
+  const customerContextContent =
+    (contextRes.data?.content as string | undefined) ?? null;
+
   // Find the current chapter via name lookup (allowlist guarantees it exists).
   const currentChapter = ARTIFACT_ORDER.find((c) => c.artifact === artifact);
   if (!currentChapter) notFound(); // unreachable given allowlist; satisfies TS.
@@ -124,15 +143,25 @@ export default async function ArtifactPage({
   return (
     <main className="min-h-screen p-12 bg-[#FAFAF7] text-[#1A1A1A] relative">
       {/* Top bar */}
-      <div className="max-w-3xl mx-auto text-sm text-[#6B6B6B]">
-        <Link
-          href={`/c/${customer.slug}`}
-          className="hover:text-[#1A1A1A] transition-colors"
-        >
-          ← {customer.name}
-        </Link>
-        <span className="mx-2 text-[#C0C0BA]">·</span>
-        <span>{currentChapter.name}</span>
+      <div className="max-w-3xl mx-auto flex items-center justify-between gap-4 text-sm text-[#6B6B6B]">
+        <div>
+          <Link
+            href={`/c/${customer.slug}`}
+            className="hover:text-[#1A1A1A] transition-colors"
+          >
+            ← {customer.name}
+          </Link>
+          <span className="mx-2 text-[#C0C0BA]">·</span>
+          <span>{currentChapter.name}</span>
+        </div>
+        {isCoverEmail ? (
+          <DraftEmailButton
+            coverEmailBody={content}
+            attachmentName="customer-context.md"
+            attachmentContent={customerContextContent}
+            filenameStem={`${customer.slug}-onboarding`}
+          />
+        ) : null}
       </div>
 
       {/* Body — interactive (selection + annotation overlay) */}

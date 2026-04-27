@@ -36,7 +36,7 @@ Required:
   --out-dir <dir>     Directory to write pages/ and combined.md into
 
 Optional:
-  --max-pages <N>     Crawl page cap (default 50)
+  --max-pages <N>     Crawl page cap (default 200)
   --help              Show this help and exit
 
 Writes:
@@ -49,7 +49,11 @@ EOF
 
 URL=""
 OUT_DIR=""
-MAX_PAGES=50
+# Default cap of 200 covers virtually every SMB site. Bumped from 50 after a
+# Teleca onboarding where the original 50-page cap missed the /pricing tree
+# and the brain-doc had to be rebuilt manually. Still capped (not unlimited)
+# because Firecrawl bills per page.
+MAX_PAGES=200
 
 while [ $# -gt 0 ]; do
   case "$1" in

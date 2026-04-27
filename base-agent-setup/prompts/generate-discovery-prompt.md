@@ -207,7 +207,7 @@ Worked example of the shape (your contents will be customer-specific):
 > 4. Caller personas in practice — who actually rings the line.
 > 5. Per-persona dream call ending — what each caller leaves with.
 > 6. Per-integration dream behaviour — what writes where, when.
-> 7. Voice and red lines beyond the broad register on file.
+> 7. _(do NOT include "red lines / do-not-say list" — common sense, not worth a question)_
 > 8. Humour vs. seriousness register — crack jokes when fitting, or strictly professional?
 > 9. Call-recording posture and jurisdictional disclosure handling.
 > 10. Known failure modes today — what currently goes wrong on calls.
@@ -264,9 +264,36 @@ You don't repeat the full schema — it's already inside the methodology body yo
 
 ### 7. Conversational tone instruction
 
-A final sentence telling ChatGPT how to begin:
+The closing instructions to ChatGPT cover three things, in this order: how to start, how to ask, and how to land the brief.
 
-> "Start the conversation with the bespoke first question above. Wait for {customer_first_name}'s reply. One question at a time. Acknowledge before moving on. Match {customer_first_name}'s energy — if they're terse, be terse; if they're chatty, be chatty."
+#### 7a. How to start
+
+> "Start with the bespoke first question above. Wait for {customer_first_name}'s reply. One question at a time. Acknowledge before moving on. Match {customer_first_name}'s energy — if they're terse, be terse; if they're chatty, be chatty."
+
+#### 7b. How to ask — multiple-choice scaffolding
+
+The customer is a small-business owner, not a voice-AI engineer. Open-ended questions ("what's your software stack?") cause blank-page paralysis. ChatGPT must offer multiple-choice scaffolding for most questions — but **generated dynamically based on what the customer has already shared**, not pre-baked.
+
+Spell this out to ChatGPT explicitly:
+
+> "When you ask a question, offer 3–4 likely options plus 'something else' or 'not sure' as escape hatches. Generate the options based on what the customer has already told you — earlier answers narrow later options.
+>
+> Example shape (illustrative — generate yours from context):
+>
+> *Bad (blank-page):* 'What's your CRM?'
+> *Good:* 'Which CRM are you using? a) HubSpot, b) Pipedrive, c) Salesforce, d) something else (tell me which)'.
+>
+> Branching matters: if they answer 'HubSpot', your next question's options should be HubSpot-shaped ('a) Service Hub, b) Marketing Hub, c) Sales Hub, d) just the free CRM') — not generic. Build forward.
+>
+> Stay succinct. Aim for fifth-grade reading level. Keep questions under 30 words. Don't write paragraphs explaining why you're asking — just ask. The customer should be able to answer in 5 seconds, not after reading a page of context.
+>
+> If the customer wants to dig into a specific topic that wasn't on the to-do list, follow them — the goal is to help them envision and describe their dream agent, not to march through a checklist. The to-do list is your safety net, not your script.
+>
+> Offer suggestions when the customer is stuck. 'Most clinics I've helped have wanted X — does that match your situation, or are you thinking differently?' Help them feel guided, not interrogated."
+
+#### 7c. How to land the brief
+
+> "When the conversation feels complete (the to-do list is covered or out-of-scope items have been explicitly closed), produce the final brief in the schema from section 6 of the methodology. **If the conversation ended up being long and detailed (rough heuristic: more than 20 turns), it may be more useful to suggest the customer just copy-paste the entire conversation back instead of — or alongside — the structured brief.** They can decide which is easier; you offer both options."
 
 ---
 

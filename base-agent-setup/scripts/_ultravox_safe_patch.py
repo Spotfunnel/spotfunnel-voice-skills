@@ -64,6 +64,15 @@ _IGNORED_DRIFT_KEYS = {
     "lastUpdated",
     "lastActivityTime",
     "modified",
+    # Ultravox auto-bumps these on every successful PATCH to systemPrompt.
+    # publishedRevisionId is the new revision the API just minted; the
+    # callTemplate created/updated timestamps re-stamp because Ultravox
+    # treats systemPrompt swap as a callTemplate edit. None of these reflect
+    # operator-meaningful drift.
+    "publishedRevisionId",
+    "created",
+    "updated",
+    "createdAt",
 }
 
 

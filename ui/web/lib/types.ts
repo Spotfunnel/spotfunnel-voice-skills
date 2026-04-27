@@ -9,6 +9,20 @@ export type Customer = {
   created_at: string;
 };
 
+// Customer + the rollups the list page needs to render its rows. Computed
+// server-side from runs/annotations/verifications so the card stays a dumb
+// presentation component.
+export type CustomerSummary = Customer & {
+  run_count: number;
+  latest_run_at: string | null;
+  latest_stage: number | null;
+  open_annotations: number;
+  // "pass" | "fail" | "partial" | "in-progress" | "none" — drives the dot
+  // color. "in-progress" means the latest run hasn't reached stage 11 yet,
+  // separate from verification outcome.
+  status: "pass" | "fail" | "partial" | "in-progress" | "none";
+};
+
 export type Run = {
   id: string;
   customer_id: string;

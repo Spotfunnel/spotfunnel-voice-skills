@@ -172,7 +172,7 @@ export function ArtifactReader({
   runId,
   artifactName,
   chapterName,
-  annotations,
+  annotations: initialAnnotations,
 }: Props) {
   const router = useRouter();
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -180,6 +180,16 @@ export function ArtifactReader({
   const [comment, setComment] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Local annotations state — seeded from the server prop, mutated optimistically
+  // on save/update/delete. Avoids router.refresh() round-trips that would flash
+  // the route's loading.tsx skeleton and reset scroll to the top of the article.
+  const [annotations, setAnnotations] = useState<Annotation[]>(initialAnnotations);
+  useEffect(() => {
+    // Re-sync if the server-rendered prop changes (e.g. navigation between runs
+    // or another tab edits the annotations).
+    setAnnotations(initialAnnotations);
+  }, [initialAnnotations]);
 
   // Rail state: closed by default. Opens via `A` keypress or clicking a mark.
   const [railOpen, setRailOpen] = useState(false);
@@ -436,7 +446,7 @@ export function ArtifactReader({
     // M22: author_email defaults to (auth.jwt() ->> 'email') at the column
     // level, so we deliberately don't pass it. The RLS policy enforces that
     // it matches the caller's JWT email, blocking impersonation.
-    const { error: insertErr } = await browserSupabase
+    const { data: inserted, error: insertErr } = await browserSupabase
       .from("annotations")
       .insert({
         run_id: runId,
@@ -448,7 +458,9 @@ export function ArtifactReader({
         char_end: popover.anchor.charEnd,
         comment: trimmed,
         status: "open",
-      });
+      })
+      .select()
+      .single();
     setSaving(false);
     if (insertErr) {
       setError(insertErr.message);
@@ -456,11 +468,15 @@ export function ArtifactReader({
     }
     setPopover(null);
     setComment("");
-    router.refresh();
+    if (inserted) {
+      setAnnotations((prev) => [...prev, inserted as Annotation]);
+    }
   }
 
   function onComposerKey(e: React.KeyboardEvent) {
-    if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+    // Enter saves; Shift+Enter inserts a newline (default textarea behaviour).
+    // Ctrl/Cmd+Enter still works as the historical save shortcut.
+    if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       void save();
     }
@@ -504,9 +520,11 @@ export function ArtifactReader({
       ) {
         setFocusedAnnotationId(null);
       }
-      router.refresh();
+      setAnnotations((prev) =>
+        prev.map((a) => (a.id === id ? { ...a, ...patch } : a)),
+      );
     },
-    [router, focusedAnnotationId, railFilter],
+    [focusedAnnotationId, railFilter],
   );
 
   const handleDelete = useCallback(
@@ -521,9 +539,11 @@ export function ArtifactReader({
       if (id === focusedAnnotationId && railFilter !== "deleted") {
         setFocusedAnnotationId(null);
       }
-      router.refresh();
+      setAnnotations((prev) =>
+        prev.map((a) => (a.id === id ? { ...a, status: "deleted" } : a)),
+      );
     },
-    [router, focusedAnnotationId, railFilter],
+    [focusedAnnotationId, railFilter],
   );
 
   // Scroll prose to a specific highlight when its rail row is clicked.
@@ -605,14 +625,23 @@ export function ArtifactReader({
       ) : null}
 
       {popover?.kind === "composer" ? (
-        <div
-          className="absolute z-50 -translate-x-1/2 -translate-y-full bg-white border border-[#E5E5E0] rounded-md shadow-lg p-4 w-80"
-          style={popoverPos(popover.rect)}
-          data-testid="annotation-composer"
-        >
-          <div className="text-sm font-serif italic text-[#6B6B6B] border-l-2 border-[#FFE38A] pl-2">
-            &ldquo;{truncate(popover.anchor.quote, 80)}&rdquo;
-          </div>
+        <>
+          <div
+            className="fixed inset-0 z-40 bg-[#1A1A1A]/20 backdrop-blur-[2px]"
+            onMouseDown={() => {
+              setPopover(null);
+              setComment("");
+              setError(null);
+            }}
+            aria-hidden
+          />
+          <div
+            className="fixed z-50 top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-white border border-[#E5E5E0] rounded-md shadow-xl p-5 w-[420px] max-w-[calc(100vw-2rem)]"
+            data-testid="annotation-composer"
+          >
+            <div className="text-sm font-serif italic text-[#6B6B6B] border-l-2 border-[#FFE38A] pl-3">
+              &ldquo;{truncate(popover.anchor.quote, 120)}&rdquo;
+            </div>
           <textarea
             autoFocus
             value={comment}
@@ -649,9 +678,10 @@ export function ArtifactReader({
             </button>
           </div>
           <div className="mt-2 text-[11px] text-[#7A7A72]">
-            Ctrl+Enter to save · Esc to cancel
+            Enter to save · Shift+Enter for a newline · Esc to cancel
           </div>
-        </div>
+          </div>
+        </>
       ) : null}
 
       {railOpen ? (
