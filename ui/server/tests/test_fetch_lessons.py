@@ -32,15 +32,21 @@ SERVICE_ROLE_KEY = os.environ.get("SUPABASE_OPERATOR_SERVICE_ROLE_KEY")
 def _import_helper():
     """Import the helper as a module so we can call its functions directly.
 
-    The script lives outside any package, so we attach its directory to
-    sys.path on the fly. Cached by pytest's natural module cache once loaded.
+    The script lives outside any package, so we load it via importlib and
+    cache the module in sys.modules ourselves — importlib.util.spec_from_file_location
+    + exec_module does not cache automatically, so a naive call here would
+    re-exec the file once per test.
     """
+    cached = sys.modules.get("fetch_lessons")
+    if cached is not None:
+        return cached
     import importlib.util
 
     spec = importlib.util.spec_from_file_location("fetch_lessons", SCRIPT)
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
     spec.loader.exec_module(module)
+    sys.modules["fetch_lessons"] = module
     return module
 
 
@@ -85,23 +91,19 @@ def test_main_empty_url_silent_exit_zero(capsys, monkeypatch):
     assert captured.err == ""
 
 
-def test_main_no_lessons_prints_empty_string():
+def test_main_no_lessons_prints_empty_string(monkeypatch):
     respx = pytest.importorskip("respx")
     helper = _import_helper()
     base_url = "https://example.supabase.co"
+    monkeypatch.setenv("SUPABASE_OPERATOR_URL", base_url)
+    monkeypatch.setenv("SUPABASE_OPERATOR_SERVICE_ROLE_KEY", "fake-key")
     with respx.mock(base_url=base_url) as router:
         router.get("/rest/v1/lessons").respond(200, json=[])
-        os.environ["SUPABASE_OPERATOR_URL"] = base_url
-        os.environ["SUPABASE_OPERATOR_SERVICE_ROLE_KEY"] = "fake-key"
-        try:
-            rc = helper.main()
-        finally:
-            os.environ.pop("SUPABASE_OPERATOR_URL", None)
-            os.environ.pop("SUPABASE_OPERATOR_SERVICE_ROLE_KEY", None)
+        rc = helper.main()
     assert rc == 0
 
 
-def test_main_two_lessons_renders_markdown(capsys):
+def test_main_two_lessons_renders_markdown(capsys, monkeypatch):
     respx = pytest.importorskip("respx")
     helper = _import_helper()
     base_url = "https://example.supabase.co"
@@ -119,15 +121,11 @@ def test_main_two_lessons_renders_markdown(capsys):
             "fix": "Quote phrases word-for-word.",
         },
     ]
+    monkeypatch.setenv("SUPABASE_OPERATOR_URL", base_url)
+    monkeypatch.setenv("SUPABASE_OPERATOR_SERVICE_ROLE_KEY", "fake-key")
     with respx.mock(base_url=base_url) as router:
         router.get("/rest/v1/lessons").respond(200, json=rows)
-        os.environ["SUPABASE_OPERATOR_URL"] = base_url
-        os.environ["SUPABASE_OPERATOR_SERVICE_ROLE_KEY"] = "fake-key"
-        try:
-            rc = helper.main()
-        finally:
-            os.environ.pop("SUPABASE_OPERATOR_URL", None)
-            os.environ.pop("SUPABASE_OPERATOR_SERVICE_ROLE_KEY", None)
+        rc = helper.main()
     captured = capsys.readouterr()
     assert rc == 0
     assert "## Active lessons" in captured.out
@@ -135,45 +133,41 @@ def test_main_two_lessons_renders_markdown(capsys):
     assert "L-002" in captured.out
 
 
-def test_main_500_warns_on_stderr_exits_zero(capsys):
+def test_main_500_warns_on_stderr_exits_zero(capsys, monkeypatch):
     respx = pytest.importorskip("respx")
     helper = _import_helper()
     base_url = "https://example.supabase.co"
+    monkeypatch.setenv("SUPABASE_OPERATOR_URL", base_url)
+    monkeypatch.setenv("SUPABASE_OPERATOR_SERVICE_ROLE_KEY", "fake-key")
     with respx.mock(base_url=base_url) as router:
         router.get("/rest/v1/lessons").respond(500, text="boom")
-        os.environ["SUPABASE_OPERATOR_URL"] = base_url
-        os.environ["SUPABASE_OPERATOR_SERVICE_ROLE_KEY"] = "fake-key"
-        try:
-            rc = helper.main()
-        finally:
-            os.environ.pop("SUPABASE_OPERATOR_URL", None)
-            os.environ.pop("SUPABASE_OPERATOR_SERVICE_ROLE_KEY", None)
+        rc = helper.main()
     captured = capsys.readouterr()
     assert rc == 0
     assert captured.out == ""
     assert "warning" in captured.err.lower() or "fetch_lessons" in captured.err.lower()
 
 
-def test_main_connect_error_retries_once_then_gives_up(capsys):
+def test_main_connect_error_retries_once_then_gives_up(capsys, monkeypatch):
     respx = pytest.importorskip("respx")
     helper = _import_helper()
     base_url = "https://example.supabase.co"
+    monkeypatch.setenv("SUPABASE_OPERATOR_URL", base_url)
+    monkeypatch.setenv("SUPABASE_OPERATOR_SERVICE_ROLE_KEY", "fake-key")
     with respx.mock(base_url=base_url) as router:
         router.get("/rest/v1/lessons").mock(
             side_effect=httpx.ConnectError("boom")
         )
-        os.environ["SUPABASE_OPERATOR_URL"] = base_url
-        os.environ["SUPABASE_OPERATOR_SERVICE_ROLE_KEY"] = "fake-key"
-        try:
-            rc = helper.main()
-        finally:
-            os.environ.pop("SUPABASE_OPERATOR_URL", None)
-            os.environ.pop("SUPABASE_OPERATOR_SERVICE_ROLE_KEY", None)
+        rc = helper.main()
         # We expect exactly two attempts (first + one retry) before giving up.
         assert router.calls.call_count == 2
     captured = capsys.readouterr()
     assert rc == 0
     assert captured.out == ""
+    # Contract: after both attempts fail, a warning trace must hit stderr so
+    # the operator sees something went wrong (exit 0 alone would be silent).
+    err_lower = captured.err.lower()
+    assert "warning" in err_lower or "connecterror" in err_lower
 
 
 # -------- Integration test --------------------------------------------------

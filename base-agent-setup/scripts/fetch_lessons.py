@@ -48,6 +48,11 @@ def _service_headers(key: str) -> dict[str, str]:
     }
 
 
+def _oneline(s: object) -> str:
+    """Strip and collapse newlines to spaces. Trusted content otherwise."""
+    return (s or "").strip().replace("\n", " ").replace("\r", " ")
+
+
 def render_lessons(rows: Iterable[dict]) -> str:
     """Render lesson rows as the markdown block consumed by generator prompts.
 
@@ -65,9 +70,12 @@ def render_lessons(rows: Iterable[dict]) -> str:
     ]
     for r in rows:
         lid = r.get("id", "L-???")
-        title = (r.get("title") or "").strip()
-        pattern = (r.get("pattern") or "").strip()
-        fix = (r.get("fix") or "").strip()
+        # Strip embedded newlines — operators may paste multi-line `fix` text
+        # from chat, and a stray \n would break the markdown bullet structure
+        # and merge the next lesson into the prior bullet's italic block.
+        title = _oneline(r.get("title"))
+        pattern = _oneline(r.get("pattern"))
+        fix = _oneline(r.get("fix"))
         lines.append(
             f"- **{lid} — {title}** _Pattern:_ {pattern} _Fix:_ {fix}"
         )
