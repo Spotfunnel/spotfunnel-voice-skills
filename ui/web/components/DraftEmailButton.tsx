@@ -20,8 +20,11 @@ export function DraftEmailButton({
   attachmentContent,
   filenameStem,
 }: Props) {
-  const [status, setStatus] = useState<"idle" | "creating" | "error">("idle");
+  const [status, setStatus] = useState<"idle" | "creating" | "ready" | "error">(
+    "idle",
+  );
   const [error, setError] = useState<string | null>(null);
+  const [draftUrl, setDraftUrl] = useState<string | null>(null);
 
   async function handleClick() {
     // Open the popup synchronously inside the user-gesture window. Safari and
@@ -33,6 +36,7 @@ export function DraftEmailButton({
 
     setStatus("creating");
     setError(null);
+    setDraftUrl(null);
 
     const subjectMatch = coverEmailBody.match(/^Subject:\s*(.+)$/m);
     const subject = subjectMatch
@@ -95,17 +99,21 @@ export function DraftEmailButton({
       fail("draft created but n8n didn't return a thread_id/account");
       return;
     }
-    const draftUrl = `https://mail.google.com/mail/u/?authuser=${encodeURIComponent(account)}#drafts/${threadId}`;
+    const url = `https://mail.google.com/mail/u/?authuser=${encodeURIComponent(account)}#drafts/${threadId}`;
+    setDraftUrl(url);
     if (popup) {
-      popup.location.href = draftUrl;
+      popup.location.href = url;
+      // Tab opened successfully. Keep `status="ready"` so we still surface a
+      // visible "open draft" link in the UI — covers the case where the popup
+      // succeeded but landed in a tab the operator didn't notice.
+      setStatus("ready");
     } else {
-      // Popup-blocker swallowed our window.open. Surface a fallback link so
-      // the operator can still reach the draft with a single click.
-      setStatus("error");
-      setError(`popup blocked — open: ${draftUrl}`);
-      return;
+      // Popup-blocker swallowed our synchronous window.open. The draft IS
+      // created in Gmail; we just need the operator to click the rendered
+      // anchor to navigate. Anchor click is a fresh user gesture, so the
+      // browser will not block it.
+      setStatus("ready");
     }
-    setStatus("idle");
   }
 
   return (
@@ -116,10 +124,25 @@ export function DraftEmailButton({
         disabled={status === "creating"}
         className="text-xs text-[#1A1A1A] border border-[#1A1A1A]/30 hover:border-[#1A1A1A] hover:bg-[#1A1A1A] hover:text-white px-3 py-1.5 rounded transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
         data-testid="draft-email-button"
-        title="Create a Gmail draft on your account with subject, body, and attachment pre-filled. Opens in a new tab."
+        title="Create a Gmail draft on your account with subject, body, and attachment pre-filled."
       >
-        {status === "creating" ? "Creating draft…" : "Open in Gmail"}
+        {status === "creating"
+          ? "Creating draft…"
+          : status === "ready"
+            ? "Create another draft"
+            : "Open in Gmail"}
       </button>
+      {status === "ready" && draftUrl ? (
+        <a
+          href={draftUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-xs text-[#3B5BDB] underline underline-offset-2 hover:text-[#2F4DBF]"
+          data-testid="draft-email-link"
+        >
+          Open draft →
+        </a>
+      ) : null}
       {error ? (
         <span
           className="text-xs text-red-600"
