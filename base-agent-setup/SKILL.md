@@ -1039,6 +1039,159 @@ If a refine halted mid-flow (e.g. a resolve call failed at Step 8), the new run 
 
 ---
 
+## Sub-command: `/base-agent review-feedback`
+
+Two-phase cross-customer protocol-improvement loop. Phase 1 turns recurring feedback into lessons; phase 2 bakes mature lessons into the generator prompt files themselves.
+
+You — Claude in chat — are the orchestrator. The schema mutations live in `scripts/review-*.sh` helpers. You do the LLM-judgment work (synthesizing lesson title/pattern/fix from cluster quotes; picking the right prompt file for promotion); the helpers record state.
+
+**Pre-requisite:** `USE_SUPABASE_BACKEND=1` and a working `SUPABASE_OPERATOR_URL` + `SUPABASE_OPERATOR_SERVICE_ROLE_KEY`. The legacy file backend has no feedback or lessons.
+
+**Idempotent / resumable:** phase 1 always reads `feedback.status='open'`; phase 2 always reads `lessons.promoted_to_prompt=false`. Re-running picks up where you left off — already-elevated feedback and already-promoted lessons drop out automatically.
+
+### Phase 1 — feedback → lessons
+
+#### Step 1.1 — Pull cross-customer clusters
+
+```bash
+bash scripts/review-list-clusters.sh > /tmp/review-clusters.jsonl
+bash scripts/review-list-singletons.sh > /tmp/review-singletons.jsonl
+```
+
+`review-list-clusters.sh` emits open feedback rows grouped by `(lower(artifact_name), comment[:80].lower())`, size ≥ 2. `review-list-singletons.sh` emits the open rows that didn't form a cluster.
+
+Empty clusters AND empty singletons → exit cleanly: *"No open feedback. Nothing to review. Done."*
+
+#### Step 1.2 — Walk each cluster
+
+For each cluster line, synthesize a `title`, `pattern`, and `fix` from the cluster's quotes + comments. Then present:
+
+```
+Pattern: brain-doc invents personas not in the meeting transcript
+Observed: dsa-law (Apr 25), automateconvert (Apr 25), telco-x (Apr 26)
+Source feedback: F-2026-04-25-001, F-2026-04-25-014, F-2026-04-26-003
+Proposed lesson title: "Brain-doc must not invent personas"
+Proposed pattern: <synthesized>
+Proposed fix: <synthesized>
+
+[P]romote / [K]eep / [D]elete?
+```
+
+- **P (promote):** call `bash scripts/refine-elevate-cluster.sh "$FEEDBACK_ID_CSV" "$TITLE" "$PATTERN" "$FIX"` (M12's helper — reused, not duplicated). It mints `L-NNN`, inserts the lesson row with `observed_in_customer_ids` derived from the source feedback, and PATCHes those rows to `status='elevated'`.
+- **K (keep):** no change. The cluster will re-surface on the next review-feedback run.
+- **D (delete):** `bash scripts/review-delete-feedback.sh "$FEEDBACK_ID_CSV"`. Physical delete — operator decided this isn't a real issue.
+
+#### Step 1.3 — Walk each singleton
+
+For each singleton, present:
+
+```
+Singleton feedback F-2026-04-25-009 (customer: dsa-law)
+Artifact: brain-doc
+Quote:   "<quote>"
+Comment: "<comment>"
+
+[P]romote (one-customer lesson) / [K]eep / [D]elete?
+```
+
+- **P:** call `bash scripts/refine-elevate-cluster.sh "$FID" "$TITLE" "$PATTERN" "$FIX"` with a single-element CSV.
+- **K:** no change.
+- **D:** `bash scripts/review-delete-feedback.sh "$FID"`.
+
+### Phase 2 — lessons → prompts
+
+#### Step 2.1 — Pull unpromoted lessons
+
+```bash
+bash scripts/review-list-lessons.sh > /tmp/review-lessons.jsonl
+```
+
+The helper emits each `promoted_to_prompt=false` lesson with maturity metadata: `customer_count`, `days_since_created`, `days_since_last_elevation`, plus a `recommendation` of `"promote"` or `"keep"`. The recommendation is `"promote"` iff `customer_count >= 3` AND `days_since_last_elevation > 14` — otherwise `"keep"`. Always defer to the operator's choice.
+
+Empty file → exit cleanly: *"No unpromoted lessons. Done."*
+
+#### Step 2.2 — Walk each lesson
+
+For each line, present:
+
+```
+Lesson L-001: Brain-doc must not invent personas
+Pattern: <pattern>
+Fix: <fix>
+Observed in 3 customers
+Created: 2026-04-25 (3 days ago)
+Source feedback: 3 rows, all elevated
+
+Maturity check:
+  - Customer count: 3 (>= 3? yes)
+  - Days since created: 3
+  - Last elevation: 1 day ago
+
+Recommended: Promote (mature, ≥3 customers, no fresh elevations in 14 days)
+Recommended: Keep (still maturing)
+
+[P]romote / [K]eep / [D]elete?
+```
+
+- **P:** pick the right prompt file for the lesson's `artifact_name`:
+
+  | artifact_name | prompt file |
+  |---|---|
+  | `brain-doc` | `prompts/synthesize-brain-doc.md` |
+  | `system-prompt` | `prompts/assemble-rough-system-prompt.md` |
+  | `discovery-prompt` / `customer-context` / `cover-email` | `prompts/generate-discovery-prompt.md` |
+
+  Then run:
+
+  ```bash
+  bash scripts/review-promote-lesson.sh "$LESSON_ID" "$PROMPT_PATH"
+  ```
+
+  The helper appends the fix under a `## Lessons learned (do not regenerate)` section at end of file (creates the section if missing), PATCHes the lesson row with `promoted_to_prompt=true / promoted_at / promoted_to_file`, then physically deletes the lesson row. Per design — once the fix lives in version-controlled prose, the runtime fetcher no longer needs the row.
+
+  **Halt-on-double-append:** if the prompt file already contains `### From <lesson_id>:` the helper refuses to write (idempotency guard against re-runs after a partial failure).
+
+- **K:** no change.
+- **D:** `bash scripts/review-delete-lesson.sh "$LESSON_ID"`. Physical delete — operator decided the lesson turned out wrong / superseded.
+
+### Final report
+
+```
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+✅ Review-feedback complete
+
+Phase 1 — feedback → lessons:
+  clusters seen:  N  (promoted: N, kept: N, deleted: N)
+  singletons:     N  (promoted: N, kept: N, deleted: N)
+  lessons created: L-007, L-008
+
+Phase 2 — lessons → prompts:
+  unpromoted lessons seen: N
+  promoted to prompt: L-002 → prompts/synthesize-brain-doc.md
+                     L-005 → prompts/generate-discovery-prompt.md
+  kept (still maturing): L-006
+  deleted (superseded):  L-001
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```
+
+### Halt-summary cheat sheet
+
+| Failure | Step | Behavior |
+|---|---|---|
+| Empty open feedback | 1.1 | Skip phase 1, fall through to phase 2. |
+| Cluster helper non-zero | 1.1 | Halt — surface stderr. |
+| `refine-elevate-cluster.sh` fails | 1.2 / 1.3 | Halt — feedback rows may be partially elevated; surface message and let operator clean up. |
+| `review-delete-feedback.sh` count mismatch | 1.2 / 1.3 | Halt — DELETE returned fewer rows than asked; investigate before continuing. |
+| Empty lessons | 2.1 | Skip phase 2; exit cleanly. |
+| Prompt file missing for lesson's artifact | 2.2 | Halt — surface the artifact_name and let operator pick a prompt file manually (or fix the lesson's artifact_name in the source feedback first). |
+| `### From L-NNN:` already present in prompt | 2.2 | Halt — refusing to double-append. The lesson row was already promoted on a prior run; clean up by manually deleting the lesson row. |
+
+### Resume note
+
+Phase 1 always reads `feedback?status=eq.open` and phase 2 always reads `lessons?promoted_to_prompt=eq.false`. A halted run can be resumed by re-invoking `/base-agent review-feedback` — the helpers naturally skip rows that already moved on.
+
+---
+
 ## Commands
 
 | Command | Behavior |
@@ -1048,6 +1201,7 @@ If a refine halted mid-flow (e.g. a resolve call failed at Step 8), the new run 
 | `/base-agent resume [slug]` | Locates the most recent run-dir for the slug via `state_resume_from`, reads `state.json`, jumps to `state_get_next_stage`, continues from there. |
 | `/base-agent status [slug]` | Read-only. Prints the state file's `stages` block and the file inventory in the run-dir without running anything. Use for audit or to see where a halted run left off. |
 | `/base-agent refine [slug]` | Walk open annotations on the latest run, classify per-run vs feedback, spawn a new run with `refined_from_run_id`, regenerate affected artifacts, probe for elevation to lessons. See "Sub-command: /base-agent refine" above. |
+| `/base-agent review-feedback` | Cluster cross-customer feedback into lessons (phase 1), then bake mature lessons into generator prompt files (phase 2). See "Sub-command: /base-agent review-feedback" above. |
 
 ---
 
