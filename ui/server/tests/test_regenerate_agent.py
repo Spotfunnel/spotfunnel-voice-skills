@@ -205,8 +205,43 @@ def test_happy_path_patches_with_full_body_only_prompt_changed(tmp_path):
     assert persisted == snapshot
 
 
-def test_drift_detection_voice_changed(tmp_path, capsys):
-    """Voice flips between snapshot and post-PATCH GET — exit 2, stderr names voice."""
+@pytest.mark.parametrize(
+    "field_name, before_value, after_value, expected_in_stderr",
+    [
+        # Voice — most visible regression (caller hears the wrong person).
+        (
+            "voice",
+            {"voiceId": "voice-steve", "name": "Steve"},
+            {"voiceId": "voice-hannah", "name": "Hannah"},
+            "voice",
+        ),
+        # Temperature — silent quality regression. 0.4 vs 0.9 changes call feel
+        # without any obvious symptom; this drift MUST be surfaced.
+        ("temperature", 0.4, 0.9, "temperature"),
+        # Model — capability regression. Switching mid-flight to a cheaper or
+        # different family is a major incident.
+        (
+            "model",
+            "fixie-ai/ultravox",
+            "fixie-ai/ultravox-mini",
+            "model",
+        ),
+        # firstSpeakerSettings — call-flow change. agent-first → user-first
+        # silently breaks the opening greeting.
+        (
+            "firstSpeakerSettings",
+            {"agent": {}},
+            {"user": {}},
+            "firstspeakersettings",
+        ),
+    ],
+)
+def test_drift_detection_named_field_changes(
+    tmp_path, capsys, field_name, before_value, after_value, expected_in_stderr
+):
+    """Each of the four production-critical fields must trigger drift on diff:
+    the helper exits 2 and the field name appears in stderr so the operator
+    knows exactly what the server changed underneath the PATCH."""
     helper = _import_helper()
 
     base = "https://ultravox.test"
@@ -215,9 +250,9 @@ def test_drift_detection_voice_changed(tmp_path, capsys):
     url = f"{base}/api/agents/{agent_id}"
 
     snapshot = _full_snapshot(system_prompt="OLD")
-    snapshot["callTemplate"]["voice"] = {"voiceId": "voice-steve", "name": "Steve"}
+    snapshot["callTemplate"][field_name] = before_value
     after = _full_snapshot(system_prompt=new_prompt)
-    after["callTemplate"]["voice"] = {"voiceId": "voice-hannah", "name": "Hannah"}
+    after["callTemplate"][field_name] = after_value
 
     snap_out = tmp_path / "snapshot.json"
 
@@ -239,7 +274,49 @@ def test_drift_detection_voice_changed(tmp_path, capsys):
     assert rc == 2, captured.err
     err_lower = captured.err.lower()
     assert "drift" in err_lower
-    assert "voice" in err_lower
+    assert expected_in_stderr in err_lower, (
+        f"expected '{expected_in_stderr}' in stderr for field '{field_name}', got:\n{captured.err}"
+    )
+
+
+def test_drift_ignored_for_server_mutated_metadata(tmp_path, capsys):
+    """updatedAt / lastActiveTime tick on every PATCH — they MUST NOT trip drift.
+    Without the ignore-list the first production run halts with a benign
+    'updatedAt changed' complaint; this test pins that behavior."""
+    helper = _import_helper()
+
+    base = "https://ultravox.test"
+    agent_id = "agent-xxxx"
+    new_prompt = "NEW prompt"
+    url = f"{base}/api/agents/{agent_id}"
+
+    snapshot = _full_snapshot(system_prompt="OLD")
+    snapshot["updatedAt"] = "2026-04-27T00:00:00Z"
+    snapshot["callTemplate"]["lastActiveTime"] = "2026-04-27T00:00:00Z"
+    after = _full_snapshot(system_prompt=new_prompt)
+    # Both timestamps tick — this is server-side bookkeeping, not real drift.
+    after["updatedAt"] = "2026-04-27T00:01:33Z"
+    after["callTemplate"]["lastActiveTime"] = "2026-04-27T00:01:35Z"
+
+    snap_out = tmp_path / "snapshot.json"
+
+    fake_urlopen, _ = _make_urlopen_router({
+        f"GET {url}": [_FakeResp(200, snapshot), _FakeResp(200, after)],
+        f"PATCH {url}": [_FakeResp(200, after)],
+    })
+
+    with patch("_ultravox_safe_patch.urllib.request.urlopen", fake_urlopen):
+        rc = helper.run(
+            agent_id=agent_id,
+            new_prompt=new_prompt,
+            pre_snapshot_out=str(snap_out),
+            base=base,
+            api_key="test-key",
+        )
+
+    captured = capsys.readouterr()
+    assert rc == 0, captured.err
+    assert "drift" not in captured.err.lower()
 
 
 def test_initial_get_5xx_no_patch_issued(tmp_path, capsys):
@@ -304,6 +381,53 @@ def test_build_patch_body_preserves_every_field():
         if k == "systemPrompt":
             continue
         assert sent_ct[k] == snap_ct[k], f"field '{k}' was not carried forward"
+
+
+@pytest.mark.parametrize(
+    "snapshot, expect_top, expect_nested",
+    [
+        # Both locations populated → write to both. A stale top-level shadowing
+        # the new nested copy is exactly the bug this case prevents.
+        (
+            {"systemPrompt": "OLD", "callTemplate": {"systemPrompt": "NEST_OLD"}},
+            True,
+            True,
+        ),
+        # Only nested → only nested gets updated. Top-level is intentionally
+        # NOT created (would risk shadowing on the next GET).
+        ({"callTemplate": {"systemPrompt": "OLD"}}, False, True),
+        # Only top-level (no callTemplate) → only top-level gets updated.
+        ({"systemPrompt": "OLD"}, True, False),
+        # Empty snapshot → wedge it under callTemplate so the next GET
+        # surfaces the prompt where Ultravox normally returns it.
+        ({}, False, True),
+    ],
+)
+def test_build_patch_body_writes_to_every_existing_systemprompt_location(
+    snapshot, expect_top, expect_nested
+):
+    """C2 fix: when both top-level systemPrompt AND callTemplate.systemPrompt
+    exist, both must be updated. Otherwise update whichever exists; default
+    to nested when neither exists."""
+    helper = _import_helper()
+    body = helper.build_patch_body(snapshot, "NEW")
+
+    if expect_top:
+        assert body.get("systemPrompt") == "NEW"
+    else:
+        assert "systemPrompt" not in body, (
+            f"unexpected top-level systemPrompt in body: {body}"
+        )
+
+    if expect_nested:
+        ct = body.get("callTemplate") or {}
+        assert ct.get("systemPrompt") == "NEW"
+    else:
+        # When we only updated the top level, callTemplate (if any) must NOT
+        # have systemPrompt added underneath it.
+        ct = body.get("callTemplate")
+        if ct is not None:
+            assert "systemPrompt" not in ct
 
 
 # -------- Integration test (live Supabase, mocked Ultravox) ----------------

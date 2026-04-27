@@ -45,6 +45,27 @@ import urllib.request
 DEFAULT_BASE = "https://api.ultravox.ai"
 TIMEOUT_S = 30.0
 
+# Server-side metadata fields that Ultravox mutates on every PATCH (or
+# otherwise drift from API-side bookkeeping). Treating any of these as drift
+# would halt the script with a benign "agent.updatedAt changed" complaint
+# every single run. They get filtered out at both the top level AND inside
+# nested objects (callTemplate.*) before the diff is computed.
+#
+# Why each:
+#   updatedAt / lastUpdated / lastModified / modified / modifiedAt — generic
+#       "row was touched" timestamps; almost every API stamps these on PATCH.
+#   lastActiveTime / lastActivityTime — Ultravox-specific recency fields that
+#       can change just from us calling GET on the agent.
+_IGNORED_DRIFT_KEYS = {
+    "updatedAt",
+    "lastActiveTime",
+    "lastModified",
+    "modifiedAt",
+    "lastUpdated",
+    "lastActivityTime",
+    "modified",
+}
+
 
 def _err(msg: str) -> None:
     print(msg, file=sys.stderr)
@@ -102,14 +123,24 @@ def build_patch_body(snapshot: dict, new_prompt: str) -> dict:
     """Carry every field from the snapshot forward; swap only systemPrompt.
 
     The snapshot is the raw GET response — we copy it, then walk to the
-    systemPrompt field. Ultravox responses surface systemPrompt under
-    callTemplate; we also handle a top-level fallback defensively.
+    systemPrompt field. Ultravox responses can surface systemPrompt at the
+    top level, nested under callTemplate, or both. We update every location
+    that already exists so a stale top-level copy can't shadow the new
+    nested value (or vice versa). When neither exists we wedge it under
+    callTemplate, since that's where Ultravox returns it on subsequent GETs.
     """
     body = json.loads(json.dumps(snapshot))  # deep copy
     ct = body.get("callTemplate")
-    if isinstance(ct, dict):
+    has_top = "systemPrompt" in body
+    has_nested = isinstance(ct, dict) and "systemPrompt" in ct
+
+    if has_top and has_nested:
+        # Update both — leaving either stale risks the wrong copy winning.
+        body["systemPrompt"] = new_prompt
         ct["systemPrompt"] = new_prompt
-    elif "systemPrompt" in body:
+    elif has_nested:
+        ct["systemPrompt"] = new_prompt
+    elif has_top:
         body["systemPrompt"] = new_prompt
     else:
         # No prior systemPrompt anywhere — wedge it under callTemplate so the
@@ -122,17 +153,22 @@ def diff_non_prompt_fields(before: dict, after: dict) -> list[str]:
     """Return human-readable diff lines for any non-systemPrompt drift.
 
     We compare the JSON-serialized form of every top-level key plus every
-    key inside callTemplate, ignoring the systemPrompt key itself.
+    key inside callTemplate, ignoring the systemPrompt key itself plus any
+    server-mutated metadata fields enumerated in _IGNORED_DRIFT_KEYS (those
+    fields tick on every PATCH and are not real drift).
     """
     drifts: list[str] = []
 
     def _norm(v: object) -> str:
         return json.dumps(v, sort_keys=True, default=str)
 
-    # Top-level keys (excluding callTemplate, which we descend into).
+    # Top-level keys (excluding callTemplate, which we descend into, and
+    # any expected-to-mutate metadata keys).
     keys = set(before.keys()) | set(after.keys())
     for k in sorted(keys):
         if k == "callTemplate":
+            continue
+        if k in _IGNORED_DRIFT_KEYS:
             continue
         b = before.get(k)
         a = after.get(k)
@@ -140,13 +176,15 @@ def diff_non_prompt_fields(before: dict, after: dict) -> list[str]:
             drifts.append(f"  field '{k}': before={_norm(b)} after={_norm(a)}")
 
     # callTemplate descendants (excluding systemPrompt — that's the field
-    # we deliberately mutated).
+    # we deliberately mutated — and ignored metadata keys).
     bct = before.get("callTemplate") or {}
     act = after.get("callTemplate") or {}
     if isinstance(bct, dict) and isinstance(act, dict):
         keys = set(bct.keys()) | set(act.keys())
         for k in sorted(keys):
             if k == "systemPrompt":
+                continue
+            if k in _IGNORED_DRIFT_KEYS:
                 continue
             b = bct.get(k)
             a = act.get(k)
