@@ -15,8 +15,10 @@
 #   --help                         print usage
 #
 # Hard rules:
-#   - NEVER PATCH. Two runs against the same customer = two new agents.
-#     Tracking which agent_id is "current" is the calling skill's job.
+#   - This script is POST-only by design — agent creation. For system-prompt
+#     updates against a live agent, use scripts/regenerate-agent.sh (M13)
+#     which does a safe full-PATCH (GET → swap systemPrompt → PATCH full body
+#     → verify no drift). Never construct a partial PATCH manually.
 #   - selectedTools is always sent as []. The reference agent may have tools;
 #     we deliberately strip them so the rough agent has no action surface.
 #   - callTemplate.eventMessages is sent as []. call.ended webhook wiring is

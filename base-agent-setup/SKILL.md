@@ -8,7 +8,7 @@ user_invocable: true
 
 > **For Claude:** This skill orchestrates 11 stages, each writing to `runs/{slug}-{timestamp}/state.json` on completion. Re-invocation with the same slug resumes from the last successful stage.
 
-The flow: scrape → brain-doc → rough system prompt → Ultravox agent (POST only, never PATCH) → Telnyx DID claim → TeXML wiring → telephony_xml repoint → discovery prompt + cover email → handoff to `/onboard-customer`. Every stage is checklist-enforced. Halt-on-error is the default; resume picks up from the last `done` stage.
+The flow: scrape → brain-doc → rough system prompt → Ultravox agent (POST first; subsequent system-prompt updates use safe full-PATCH) → Telnyx DID claim → TeXML wiring → telephony_xml repoint → discovery prompt + cover email → handoff to `/onboard-customer`. Every stage is checklist-enforced. Halt-on-error is the default; resume picks up from the last `done` stage.
 
 You are the operator-facing orchestrator. You read each stage in order, run the script or apply the prompt, parse the output, write state, and move on. You do not improvise the order. You do not skip stages. If a stage halts, you surface the error verbatim and stop — Leo decides whether to fix and resume.
 
@@ -21,7 +21,7 @@ You are the operator-facing orchestrator. You read each stage in order, run the 
 - **`/tmp/` paths in Git Bash do not map to a Windows path Python can read.** For any file handed from `curl` to a Python helper, use a portable temp path like `${TMPDIR:-$HOME/.tmp-spotfunnel-skills}/...` (create the dir if missing, `rm -rf` when done).
 - **Skill scripts source `.env` via `scripts/env-check.sh`** which resolves the env file in this order: `$SPOTFUNNEL_SKILLS_ENV` → `<repo-root>/.env` → cached path at `~/.config/spotfunnel-skills/env-path`. See [ENV_SETUP.md](ENV_SETUP.md).
 - **Run-dir convention.** Every run gets its own directory under `base-agent-setup/runs/{slug}-{ISO_TS}/`. The path is exported as `STATE_RUN_DIR` once `state_init` runs; every subsequent script writes into that dir.
-- **Never PATCH an Ultravox agent.** This is the cardinal rule of this skill. Corrections to the rough agent require a NEW POST and discarding the old agent_id. The `scripts/ultravox-create-agent.sh` script POSTs only — there is no PATCH variant by design.
+- **Updating a live Ultravox agent uses safe full-PATCH** (`scripts/regenerate-agent.sh`). PATCH semantics revert any omitted field to API default, so the script GETs every current setting, swaps in the new system-prompt, and PATCHes the complete body. Never construct a partial PATCH manually — always carry every field forward.
 
 ---
 
@@ -354,14 +354,11 @@ If `{run-dir}/reference-settings.json` exists, skip and proceed. The reference a
 
 ### CARDINAL RULE — READ THIS BEFORE EVERY INVOCATION
 
-**NEVER PATCH this agent.** Ultravox PATCH wipes unrelated callTemplate fields and silently corrupts the agent. If you need to correct anything about the agent — wrong prompt, wrong voice, wrong name — do this:
+**Stage 6 only ever POSTs.** This stage creates a brand-new agent — never PATCH from here. The `scripts/ultravox-create-agent.sh` script has no PATCH variant by design; if you find yourself reaching for one, you're in the wrong stage.
 
-1. POST a brand-new agent (re-run this stage).
-2. Update state with the new `agentId`.
-3. Re-run Stage 9 (telephony repoint) to point the DID at the new agent.
-4. Discard the old agent_id (manually delete via Ultravox console after confirming the new one works).
+Subsequent system-prompt updates against a live agent — e.g. when `/base-agent refine` regenerates the prompt — go through `scripts/regenerate-agent.sh` (M13), which does a safe full-PATCH (GET every current field → swap only systemPrompt → PATCH full body → verify no drift). That preserves the agent_id so Telnyx telephony_xml wiring survives.
 
-The `scripts/ultravox-create-agent.sh` script POSTs only — there is no PATCH variant by design. Do not author one.
+If you need to correct voice/name/firstSpeaker after the agent is live: that still requires a new POST + DELETE because the safe-PATCH path is scoped to system-prompt only. Plan: POST a brand-new agent (re-run this stage), update state with the new `agentId`, re-run Stage 9 (telephony repoint), then discard the old agent_id via the Ultravox console.
 
 ### What to do
 
@@ -968,12 +965,10 @@ If `system-prompt` was regenerated in Step 6 OR Step 7, ask: *"system-prompt was
 On Y:
 
 ```bash
-# M13 deliverable — not yet built. Until M13 lands:
-echo "M13 will land scripts/regenerate-agent.sh for safe full-PATCH. For now: copy"
-echo "$STATE_RUN_DIR/system-prompt.md into the Ultravox agent in the console manually."
+bash scripts/regenerate-agent.sh "$SLUG"
 ```
 
-Do NOT roll your own Ultravox PATCH here. The full-PATCH-with-roundtrip strategy is M13's deliverable; until it lands, the operator pastes the prompt manually.
+The script GETs every current Ultravox setting, swaps in the new system-prompt, PATCHes the full body back, and verifies post-PATCH state matches pre-update state on every non-systemPrompt field. The pre-update snapshot lands in `state.live_agent_pre_update` for audit/rollback; `state.system_prompt_pushed_at` is stamped on success. On drift detection (any non-systemPrompt field changed), the script halts with a diff to stderr — investigate before re-running. Never construct a partial PATCH manually; always go through this script.
 
 ### Step 10 — Elevation probing
 
@@ -1062,4 +1057,4 @@ If a refine halted mid-flow (e.g. a resolve call failed at Step 8), the new run 
 - **The reference agent pull is live every run** by design — so tuning the reference agent (voice, temperature, inactivity) propagates automatically to every new customer's rough agent. If you want to pin a customer to a specific reference snapshot, copy `reference-settings.json` somewhere stable and pass it via a future `--settings-file-override` flag.
 - **The discovery prompt + cover email are the highest-leverage outputs of this skill.** A weak opener wastes the customer's ChatGPT session. Get the bespoke first question right; don't ship generic.
 - **The `/onboard-customer` handoff is intentionally late.** If anything in Stages 1–10 fails, no Supabase rows are written and no magic links are sent. The customer's first contact happens after the rough agent is verified working.
-- **Hard rule, repeated for emphasis:** NEVER PATCH an Ultravox agent via API. The cardinal rule of this skill. POST a new agent and discard the old one if you need to correct anything.
+- **Hard rule, repeated for emphasis:** Never construct a partial Ultravox PATCH body. PATCH semantics revert any omitted field to API default (silently wipes voice/temp/inactivity/tools). System-prompt updates against a live agent go through `scripts/regenerate-agent.sh` (safe full-PATCH: GET → swap systemPrompt → PATCH full body → verify no drift). For non-prompt corrections (voice/name/firstSpeaker), POST a new agent and discard the old one.
