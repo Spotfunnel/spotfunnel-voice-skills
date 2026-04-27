@@ -36,7 +36,7 @@ Required:
   --out-dir <dir>     Directory to write pages/ and combined.md into
 
 Optional:
-  --max-pages <N>     Crawl page cap (default 200)
+  --max-pages <N>     Crawl page cap (default 100)
   --help              Show this help and exit
 
 Writes:
@@ -49,11 +49,14 @@ EOF
 
 URL=""
 OUT_DIR=""
-# Default cap of 200 covers virtually every SMB site. Bumped from 50 after a
+# Default cap of 100 covers virtually every SMB site. Bumped from 50 after a
 # Teleca onboarding where the original 50-page cap missed the /pricing tree
-# and the brain-doc had to be rebuilt manually. Still capped (not unlimited)
-# because Firecrawl bills per page.
-MAX_PAGES=200
+# and the brain-doc had to be rebuilt manually. The crawl naturally stops
+# when all on-domain pages are reached — Firecrawl v2 defaults to
+# allowExternalLinks:false, so it never wanders to news.com.au via a blog
+# link. The cap only kicks in for sites that genuinely have >100 internal
+# pages (rare for SMBs); it's there because Firecrawl bills per page.
+MAX_PAGES=100
 
 while [ $# -gt 0 ]; do
   case "$1" in

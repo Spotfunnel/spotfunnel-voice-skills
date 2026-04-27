@@ -148,7 +148,7 @@ bash scripts/firecrawl-scrape.sh \
   --out-dir "$STATE_RUN_DIR/scrape"
 ```
 
-The default page cap is 200 (set via `--max-pages` if the operator wants different; configurable via `FIRECRAWL_MAX_PAGES` env override). The 200 default was chosen because the prior 50-page cap missed the `/pricing` tree on a Teleca-sized site; 200 covers virtually every SMB site without exhausting Firecrawl free-tier credits.
+The default page cap is 100 (set via `--max-pages` if the operator wants different; configurable via `FIRECRAWL_MAX_PAGES` env override). The 100 default was chosen because the prior 50-page cap missed the `/pricing` tree on a Teleca-sized site; 100 covers virtually every SMB site without exhausting Firecrawl free-tier credits. Firecrawl v2 stays on the start domain by default (`allowExternalLinks:false`), so the crawl stops naturally once every internal page is reached — the cap only kicks in for sites that genuinely have >100 internal pages.
 
 ### Output schema
 
@@ -165,7 +165,7 @@ Print the scrape progress to the operator while it's running (the script emits `
 
 If the cap was hit, flag it so the operator knows the brain-doc may be incomplete:
 
-> *"Scrape hit the 200-page cap. Brain-doc will be built from the first 200 pages only. Re-run with `--max-pages 400` if the customer's site is genuinely larger and you want full coverage."*
+> *"Scrape hit the 100-page cap. Brain-doc will be built from the first 100 pages only. Re-run with `--max-pages 200` if the customer's site is genuinely larger and you want full coverage."*
 
 Mark the stage complete:
 
