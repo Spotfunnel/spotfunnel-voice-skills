@@ -1,5 +1,9 @@
 # Rough system-prompt assembly
 
+## Before you generate
+
+Run `python3 scripts/fetch_lessons.py` from `base-agent-setup/`. Read every line of its output and treat it as binding. If the output is empty, proceed normally. The lessons reflect cross-customer corrections the operator has confirmed but not yet baked into this prompt — honor them.
+
 > **Audience:** you, reading this at Stage 4 of the `/base-agent` skill.
 >
 > **Job:** assemble the customer agent's `systemPrompt` by concatenating five layers in a specific order, with specific delimiters, and write it to `{run-dir}/system-prompt.md`.

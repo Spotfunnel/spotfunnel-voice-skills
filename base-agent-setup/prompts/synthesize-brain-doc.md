@@ -1,5 +1,9 @@
 # Brain-doc synthesis prompt
 
+## Before you generate
+
+Run `python3 scripts/fetch_lessons.py` from `base-agent-setup/`. Read every line of its output and treat it as binding. If the output is empty, proceed normally. The lessons reflect cross-customer corrections the operator has confirmed but not yet baked into this prompt — honor them.
+
 > **Audience:** you, reading this at Stage 3 of the `/base-agent` skill.
 >
 > **Job:** read three inputs and produce a single structured markdown brain-doc that downstream stages depend on.
