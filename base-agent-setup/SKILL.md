@@ -824,6 +824,225 @@ Hard non-goals — out of scope for `/base-agent`:
 
 ---
 
+## Sub-command: `/base-agent refine [customer-slug]`
+
+Replays the operator's open annotations as patches against a NEW run. Each annotation is classified (per-run patch vs cross-customer feedback signal vs both), per-run patches re-generate the affected artifact(s), feedback signals land in `operator_ui.feedback`, and recurring patterns get probed for elevation to `operator_ui.lessons` at the end.
+
+You — Claude in chat — are the orchestrator. The schema mutations live in `scripts/refine-*.sh` helpers. You do the LLM-judgment work (classifying annotations, splitting mixed comments, regenerating artifacts) and call the helpers to record state.
+
+**Pre-requisite:** `USE_SUPABASE_BACKEND=1` and a working `SUPABASE_OPERATOR_URL` + `SUPABASE_OPERATOR_SERVICE_ROLE_KEY`. The legacy file backend has no annotations to refine against.
+
+### Step 1 — Resolve the latest run
+
+```bash
+SLUG="<customer-slug>"
+bash scripts/refine-list-annotations.sh "$SLUG" > /tmp/refine-anns.jsonl
+```
+
+The helper looks up the customer by slug, finds the latest `runs.created_at` for that customer, and prints open annotations as JSON Lines (one per line) ordered by `(artifact_name, char_start)`.
+
+**Halt conditions:**
+
+- Helper exits non-zero with `no customer for slug` → halt: *"No customer matches `<slug>`. Did you mean a different slug? Run `/base-agent status <slug>` for context."*
+- Helper exits non-zero with `no runs for slug` → halt: *"Customer exists but has no runs. There's nothing to refine. Run `/base-agent <slug>` first."*
+- File is empty (zero open annotations) → exit cleanly: *"Nothing to refine — no open annotations on the latest run. Done."*
+
+### Step 2 — Read context
+
+Read the unpromoted lessons table for cross-customer guardrails:
+
+```bash
+python3 scripts/fetch_lessons.py
+```
+
+Surface the lesson list to the operator at the start of refine so they have context: *"Heads-up — N active lessons in play. <list ids + titles>. These guard your classification."*
+
+### Step 3 — Classify each annotation interactively
+
+Walk `/tmp/refine-anns.jsonl` one annotation at a time. For each one:
+
+1. Print to the operator: artifact name, char range, the quoted text, the comment.
+2. Apply the classification heuristic yourself:
+   - **Pure factual correction** (a wrong fact about the specific customer — wrong address, wrong phone, wrong service area, wrong staff name) → `per-run`. No question. Save silently. Bias toward this when the comment names a concrete fact.
+   - **Pure behavior critique** (a critique of HOW the generator behaves — invents personas, paraphrases brand voice, ships generic openers) → `feedback` candidate. Ask the operator: *"Behavior critique. Record as feedback signal? [Y/n]"* Default Y on enter.
+   - **Mixed** (both a factual correction AND a behavioral critique in one annotation) → split. The fact half is `per-run` silently. Surface only the behavior half: *"This annotation is mixed. The factual half (`<extract>`) is being applied silently. The behavior half is: `<extract>` — record as feedback signal? [Y/n]"*
+3. After each decision, call:
+
+   ```bash
+   # Per-run only:
+   bash scripts/refine-resolve-annotation.sh "$ANN_ID" "$NEW_RUN_ID" per-run
+   # Feedback only:
+   bash scripts/refine-record-feedback.sh "$ANN_ID"
+   bash scripts/refine-resolve-annotation.sh "$ANN_ID" "$NEW_RUN_ID" feedback
+   # Mixed (operator answered Y on the behavior half):
+   bash scripts/refine-record-feedback.sh "$ANN_ID" "<behavior-half-extract>"
+   bash scripts/refine-resolve-annotation.sh "$ANN_ID" "$NEW_RUN_ID" mixed
+   ```
+
+   `$NEW_RUN_ID` doesn't exist yet — defer the resolve calls until after Step 5 spawns the new run. Hold the classification decisions in working memory.
+
+**Halt conditions:**
+
+- `refine-record-feedback.sh` returns non-zero → halt; the feedback insert failed and we can't half-resolve. Surface stderr verbatim.
+- Operator declines a behavior critique with `n` and there's no factual correction half → mark the annotation `per-run` (silent — nothing to apply, but don't leave it open).
+
+### Step 4 — Group classified annotations into per-run patches
+
+In your working memory, group all `per-run` and the factual half of `mixed` annotations by `artifact_name`. The result is a per-artifact list of corrections to inject. Each correction = `(quote, comment, char_range)`.
+
+The artifacts you may need to regenerate: `brain-doc`, `system-prompt`, `discovery-prompt`, `customer-context`, `cover-email`. Tools you have: the inline regeneration prompts at `prompts/synthesize-brain-doc.md`, `prompts/assemble-rough-system-prompt.md`, `prompts/generate-discovery-prompt.md`.
+
+### Step 5 — Cascade prompt + spawn the new run
+
+Ask the operator: *"Per-run patches will modify {list of artifacts}. Re-derive downstream artifacts? [y/N]"* Default N. The dependency order is:
+
+```
+brain-doc  →  system-prompt  →  discovery-prompt  ⊕  customer-context  →  cover-email
+```
+
+If the operator says Y, mark every downstream artifact for regeneration too.
+
+Spawn the new run:
+
+```bash
+NEW_SLUG_TS="$(bash scripts/refine-spawn-run.sh "$SLUG")"
+export STATE_RUN_ID="$NEW_SLUG_TS"
+export STATE_RUN_DIR="base-agent-setup/runs/$NEW_SLUG_TS"
+mkdir -p "$STATE_RUN_DIR"
+NEW_RUN_ID="$(bash scripts/state.sh state_get_next_stage >/dev/null; \
+  curl --ssl-no-revoke -sS \
+    -H "apikey: $SUPABASE_OPERATOR_SERVICE_ROLE_KEY" \
+    -H "Authorization: Bearer $SUPABASE_OPERATOR_SERVICE_ROLE_KEY" \
+    -H "Accept-Profile: operator_ui" \
+    "$SUPABASE_OPERATOR_URL/rest/v1/runs?slug_with_ts=eq.$NEW_SLUG_TS&select=id" \
+    | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["id"])')"
+```
+
+`refine-spawn-run.sh` creates the new `runs` row with `refined_from_run_id` pointing at the prior run, and copies every artifact from the prior run forward as the baseline.
+
+### Step 6 — Apply per-run patches
+
+For each artifact in the patch group, re-run the relevant inline generator prompt (`prompts/synthesize-brain-doc.md` for brain-doc, `prompts/assemble-rough-system-prompt.md` for system-prompt, `prompts/generate-discovery-prompt.md` for discovery-prompt + customer-context + cover-email). Inject the corrections at the top of the prompt as a `<correction>` block:
+
+```
+<correction>
+The operator marked these facts wrong in the previous run. Apply them verbatim:
+- Quote: "<quote-from-annotation>"
+  Correction: "<comment-from-annotation>"
+- ...
+</correction>
+```
+
+Write the regenerated artifact to `$STATE_RUN_DIR/<artifact>.md`, then mirror it to Supabase:
+
+```bash
+source scripts/state.sh
+state_set_artifact brain-doc "$STATE_RUN_DIR/brain-doc.md"
+# ...repeat per regenerated artifact
+```
+
+### Step 7 — Cascade downstream artifacts (only if Step 5 = Y)
+
+Walk the dependency graph and re-run the generator for each downstream artifact. Same prompt-with-`<correction>`-block pattern, except the `<correction>` block can be empty for downstream artifacts whose direct corrections are zero — they regenerate purely because their upstream changed.
+
+### Step 8 — Resolve consumed annotations
+
+Now that `$NEW_RUN_ID` exists, replay the deferred resolve calls from Step 3:
+
+```bash
+bash scripts/refine-resolve-annotation.sh "$ANN_ID" "$NEW_RUN_ID" "$CLASS"
+```
+
+Where `$CLASS` is one of `per-run` / `feedback` / `mixed`.
+
+**Halt conditions:**
+
+- Any resolve call returns non-zero → halt; investigate before proceeding. The new run still exists; the operator can re-run refine to retry the resolves.
+
+### Step 9 — System-prompt push prompt
+
+If `system-prompt` was regenerated in Step 6 OR Step 7, ask: *"system-prompt was regenerated. Push to live Ultravox agent now? [y/N]"*
+
+On Y:
+
+```bash
+# M13 deliverable — not yet built. Until M13 lands:
+echo "M13 will land scripts/regenerate-agent.sh for safe full-PATCH. For now: copy"
+echo "$STATE_RUN_DIR/system-prompt.md into the Ultravox agent in the console manually."
+```
+
+Do NOT roll your own Ultravox PATCH here. The full-PATCH-with-roundtrip strategy is M13's deliverable; until it lands, the operator pastes the prompt manually.
+
+### Step 10 — Elevation probing
+
+Once all annotations are resolved, probe for cross-customer patterns to elevate:
+
+```bash
+bash scripts/refine-cluster-feedback.sh "$SLUG" > /tmp/refine-clusters.jsonl
+```
+
+The helper reads open feedback rows for this customer (across all runs), groups by `(lower-cased artifact_name, comment[:80].lower())`, and emits clusters with size ≥ 2 as JSON Lines. Empty file = no clusters big enough = exit cleanly.
+
+For each cluster:
+
+1. Print to the operator: *"This pattern showed up in {N} annotations: '<comment-prefix>' on `<artifact>`. Elevate to a lesson now? [y/N]"*
+2. On Y, ask for `title`, `pattern`, `fix` — three short single-line strings. The cluster's quotes/comments give you raw material; the operator polishes.
+3. Insert the lesson and mark the cluster's feedback rows elevated:
+
+   ```bash
+   bash scripts/refine-elevate-cluster.sh "$FEEDBACK_ID_CSV" "$TITLE" "$PATTERN" "$FIX"
+   ```
+
+   `$FEEDBACK_ID_CSV` is the cluster's `feedback_ids` joined with commas.
+
+The helper generates the next `L-NNN` id, inserts the lesson with `observed_in_customer_ids` derived from the source feedback rows, and PATCHes those rows to `status='elevated'` with `elevated_to_lesson_id`.
+
+### Final report
+
+```
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+✅ Refine complete — new run: {NEW_SLUG_TS}
+   refined_from: {OLD_SLUG_TS}
+
+Annotations consumed:
+  per-run:  N
+  feedback: N
+  mixed:    N
+
+Artifacts regenerated:
+  - brain-doc       (Y patches applied)
+  - system-prompt   (cascade)
+  ...
+
+Lessons elevated:
+  - L-007: <title>  (from F-..., F-...)
+  ...
+
+System-prompt push:
+  - {pending — see step 9 / M13 deliverable}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```
+
+### Halt-summary cheat sheet
+
+| Failure | Step | Behavior |
+|---|---|---|
+| Slug not found | 1 | Halt — friendly "no customer matches" message. |
+| Zero open annotations | 1 | Exit cleanly — "nothing to refine". |
+| Feedback insert fails | 3 | Halt — don't half-resolve. Surface stderr. |
+| Spawn-run insert fails | 5 | Halt — surface stderr; no annotations resolved yet. |
+| Resolve call fails | 8 | Halt — new run exists, operator re-runs refine to retry resolves. |
+| Cascade=N but system-prompt was patched | 9 | Still ask the push question. Operator may want a manual paste. |
+| Cluster size < 2 across all groupings | 10 | Skip elevation; exit cleanly. |
+
+### Resume note
+
+`/base-agent refine` is itself idempotent over annotations: a re-run on the same customer reads the SAME `latest run` (the one with the open annotations), spawns ANOTHER refine run, and consumes the still-open annotations. The previously-resolved ones are excluded by `status=eq.open` in `refine-list-annotations.sh`.
+
+If a refine halted mid-flow (e.g. a resolve call failed at Step 8), the new run row from Step 5 already exists with the regenerated artifacts; re-running refine will skip those annotations whose `status` already flipped and resolve the remainder against ANOTHER new run. This is intentional — refine is replayable.
+
+---
+
 ## Commands
 
 | Command | Behavior |
@@ -832,6 +1051,7 @@ Hard non-goals — out of scope for `/base-agent`:
 | `/base-agent [customer-name]` | Same as guided, but skips the "what's the customer name" prompt. |
 | `/base-agent resume [slug]` | Locates the most recent run-dir for the slug via `state_resume_from`, reads `state.json`, jumps to `state_get_next_stage`, continues from there. |
 | `/base-agent status [slug]` | Read-only. Prints the state file's `stages` block and the file inventory in the run-dir without running anything. Use for audit or to see where a halted run left off. |
+| `/base-agent refine [slug]` | Walk open annotations on the latest run, classify per-run vs feedback, spawn a new run with `refined_from_run_id`, regenerate affected artifacts, probe for elevation to lessons. See "Sub-command: /base-agent refine" above. |
 
 ---
 
