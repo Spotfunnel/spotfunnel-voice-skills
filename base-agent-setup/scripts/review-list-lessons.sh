@@ -11,13 +11,20 @@
 #    "customer_count": N,
 #    "created_at": "ISO",
 #    "days_since_created": N,
-#    "last_elevation_at": "ISO" | null,
-#    "days_since_last_elevation": N | null,
+#    "oldest_source_feedback_at": "ISO" | null,
+#    "days_since_oldest_source_feedback": N | null,
 #    "recommendation": "promote" | "keep"}
 #
 # Recommendation heuristic (from design doc): customer_count >= 3 AND
-# days_since_last_elevation > 14 → promote. Otherwise keep. The orchestrator
-# always defers to the operator's choice — this is just a hint.
+# days_since_oldest_source_feedback > 14 → promote. Otherwise keep. The
+# orchestrator always defers to the operator's choice — this is just a hint.
+#
+# Naming honesty: source_feedback_ids is set ONCE at lesson creation (M12's
+# refine-elevate-cluster.sh doesn't append to it on later elevations), and
+# feedback.created_at doesn't change when status flips to 'elevated'. So this
+# metric is "how long ago was the earliest feedback row that fed this lesson
+# created" — NOT "how long since the lesson was last touched". Use
+# days_since_created if you want the lesson row's own age.
 
 set -euo pipefail
 
@@ -33,7 +40,7 @@ if [ "$LESSON_COUNT" -eq 0 ]; then
 fi
 
 # Collect every source_feedback_id across all lessons so we can fetch their
-# created_at in one round-trip and derive last_elevation_at per lesson.
+# created_at in one round-trip and derive oldest_source_feedback_at per lesson.
 ALL_FB_IDS_JSON="$(python3 -c '
 import json, sys
 rows = json.loads(sys.argv[1])
@@ -90,16 +97,20 @@ for L in lessons:
     fids = L.get("source_feedback_ids") or []
     created = parse_ts(L.get("created_at"))
     days_created = days_since(created)
-    # last elevation = max(created_at) over the lessons source_feedback rows.
-    last_elev = None
+    # oldest_source_feedback = min(created_at) over the lesson source rows.
+    # Honest naming: source_feedback_ids is set once at lesson creation and
+    # feedback.created_at is immutable, so this is "earliest feedback row
+    # contributing to this lesson", not "last elevation".
+    oldest_src = None
     for fid in fids:
         ts = parse_ts(fb_created.get(fid))
-        if ts and (last_elev is None or ts > last_elev):
-            last_elev = ts
-    days_last = days_since(last_elev)
+        if ts and (oldest_src is None or ts < oldest_src):
+            oldest_src = ts
+    days_oldest_src = days_since(oldest_src)
     cust_count = len(cust_ids)
     recommend = "keep"
-    if cust_count >= 3 and days_last is not None and days_last > 14:
+    # Threshold unchanged: ≥3 customers AND oldest source >14 days old.
+    if cust_count >= 3 and days_oldest_src is not None and days_oldest_src > 14:
         recommend = "promote"
     out = {
         "id": L["id"],
@@ -111,8 +122,8 @@ for L in lessons:
         "customer_count": cust_count,
         "created_at": L.get("created_at"),
         "days_since_created": days_created,
-        "last_elevation_at": last_elev.isoformat() if last_elev else None,
-        "days_since_last_elevation": days_last,
+        "oldest_source_feedback_at": oldest_src.isoformat() if oldest_src else None,
+        "days_since_oldest_source_feedback": days_oldest_src,
         "recommendation": recommend,
     }
     print(json.dumps(out, ensure_ascii=False))
