@@ -65,15 +65,35 @@ export default async function RunScopedCustomerPage({
   );
 
   const artifactNames = new Set<string>();
-  const { data: artifactRows, error: artifactError } = await supabase
-    .from("artifacts")
-    .select("artifact_name")
-    .eq("run_id", run.id);
-  if (artifactError) {
-    throw new Error(`Failed to load artifacts: ${artifactError.message}`);
+  const openByArtifact = new Map<string, number>();
+  const resolvedByArtifact = new Map<string, number>();
+  const [artifactRows, annotationRows] = await Promise.all([
+    supabase
+      .from("artifacts")
+      .select("artifact_name")
+      .eq("run_id", run.id),
+    supabase
+      .from("annotations")
+      .select("artifact_name, status")
+      .eq("run_id", run.id)
+      .in("status", ["open", "resolved"]),
+  ]);
+  if (artifactRows.error) {
+    throw new Error(`Failed to load artifacts: ${artifactRows.error.message}`);
   }
-  for (const row of artifactRows ?? []) {
+  if (annotationRows.error) {
+    throw new Error(
+      `Failed to load annotation counts: ${annotationRows.error.message}`,
+    );
+  }
+  for (const row of artifactRows.data ?? []) {
     artifactNames.add(row.artifact_name as string);
+  }
+  for (const row of annotationRows.data ?? []) {
+    const name = row.artifact_name as string;
+    const status = row.status as string;
+    const target = status === "open" ? openByArtifact : resolvedByArtifact;
+    target.set(name, (target.get(name) ?? 0) + 1);
   }
 
   let verificationSummary: VerificationSummary | null = null;
@@ -127,7 +147,8 @@ export default async function RunScopedCustomerPage({
                     ? `/c/${customer.slug}/run/${run.id}/${chapter.artifact}`
                     : null
                 }
-                annotationCount={null}
+                openCount={openByArtifact.get(chapter.artifact) ?? 0}
+                resolvedCount={resolvedByArtifact.get(chapter.artifact) ?? 0}
               />
             );
           })}
@@ -138,14 +159,16 @@ export default async function RunScopedCustomerPage({
               name={`Scraped pages (${scrapeCount})`}
               // No run-scoped scraped-pages route yet; fall back to latest.
               href={`/c/${customer.slug}/scraped-pages`}
-              annotationCount={null}
+              openCount={openByArtifact.get("scraped-pages") ?? 0}
+              resolvedCount={resolvedByArtifact.get("scraped-pages") ?? 0}
             />
           ) : (
             <ChapterRow
               number={7}
               name="Scraped pages"
               href={null}
-              annotationCount={null}
+              openCount={null}
+              resolvedCount={null}
             />
           )}
         </div>
