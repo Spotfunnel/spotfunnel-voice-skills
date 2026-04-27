@@ -34,6 +34,12 @@ from datetime import datetime, timezone
 TIMEOUT_S = 15.0
 
 ULTRAVOX_BASE = "https://api.ultravox.ai"
+# Telephony XML endpoint lives on the app.* host, not api.* — see
+# scripts/wire-ultravox-telephony.sh which PATCHes Telnyx voice_url to
+# https://app.ultravox.ai/api/agents/{id}/telephony_xml. Verification must
+# expect the same host the wiring script actually sets, otherwise check 6
+# would surface a false-positive mismatch on every correctly-wired customer.
+ULTRAVOX_TELEPHONY_BASE = "https://app.ultravox.ai"
 TELNYX_BASE = "https://api.telnyx.com/v2"
 
 # Operator UI schema (where we persist results). Distinct from
@@ -399,7 +405,7 @@ def _check_call_routing(state: dict, pn_row: dict | None) -> tuple[dict, str]:
     # and note any wiring fields the phone_number does carry.
     agent_id = state.get("ultravox_agent_id", "")
     expected_url = (
-        f"https://app.ultravox.ai/api/agents/{agent_id}/telephony_xml"
+        f"{ULTRAVOX_TELEPHONY_BASE}/api/agents/{agent_id}/telephony_xml"
         if agent_id else ""
     )
     detail = f"connection_id={conn_id}"
@@ -605,6 +611,17 @@ def _check_test_call(state: dict, tx_key: str) -> dict:
         "Accept": "application/json",
     }
     payload = {"from": from_num, "to": did, "connection_id": conn_id}
+
+    # Audit banner: this is the only verify check that costs real money +
+    # places a real PSTN leg. Print BEFORE the POST so an operator running
+    # /base-agent verify --include-call in CI sees the warning even if the
+    # subsequent network call hangs or the process gets killed.
+    print(
+        f"verify: PLACING REAL CALL from={from_num} to={did} via connection_id={conn_id}",
+        file=sys.stderr,
+        flush=True,
+    )
+
     try:
         status, body = _http(
             "POST", f"{TELNYX_BASE}/calls", headers, payload, timeout=20.0
@@ -627,19 +644,30 @@ def _check_test_call(state: dict, tx_key: str) -> dict:
     # Brief wait so the leg is in a hangup-able state.
     time.sleep(2.0)
     hangup_url = f"{TELNYX_BASE}/calls/{urllib.parse.quote(call_id, safe='')}/actions/hangup"
+    hangup_remediation = (
+        "Manually hang up via Telnyx console: https://portal.telnyx.com/#/calls"
+        f" — call_control_id={call_id}"
+    )
+    # Hangup is idempotent on Telnyx — safe to retry once. Goal: minimise
+    # the chance a transient transport blip leaves a real PSTN leg ringing
+    # for 60-90s until Telnyx times the call out.
     try:
         h_status, h_body = _http("POST", hangup_url, headers, {}, timeout=15.0)
-    except RuntimeError as e:
-        # The call placed; hangup transport-failed. Still a fail (we want
-        # the cleanup) but report explicitly.
-        return _result(
-            cid, title, "fail", started,
-            f"call placed (id={call_id}) but hangup transport error: {e}",
-        )
+    except RuntimeError as e1:
+        time.sleep(1.0)
+        try:
+            h_status, h_body = _http("POST", hangup_url, headers, {}, timeout=15.0)
+        except RuntimeError as e2:
+            return _result(
+                cid, title, "fail", started,
+                f"call placed (id={call_id}) but hangup transport error after retry: {e2} (initial: {e1})",
+                remediation=hangup_remediation,
+            )
     if h_status >= 400:
         return _result(
             cid, title, "fail", started,
             f"call placed (id={call_id}) but hangup HTTP {h_status}: {h_body!r}",
+            remediation=hangup_remediation,
         )
     return _result(cid, title, "pass", started, f"placed + hung up call {call_id}")
 
@@ -756,19 +784,35 @@ def main(argv: list[str] | None = None) -> int:
         print(f"verify: {e}", file=sys.stderr)
         return 1
 
-    if not args.no_write:
-        op_url = os.environ.get("SUPABASE_OPERATOR_URL", "")
-        op_key = os.environ.get("SUPABASE_OPERATOR_SERVICE_ROLE_KEY", "")
-        try:
-            _persist_verification(op_url, op_key, run_row["id"], report)
-        except RuntimeError as e:
-            print(f"verify: persistence failed — {e}", file=sys.stderr)
-            return 1
-
+    # Print report FIRST. The report is the actually-actionable output:
+    # operators read it for skip/fail detail and remediation pointers. If
+    # persistence subsequently fails (DB outage, schema drift, etc.) we
+    # still want them to have seen the report. Persistence is a record;
+    # the printed report is the operator-facing audit trail.
     if args.json:
         print(json.dumps(report, indent=2))
     else:
         print(_render_text(report, args.slug))
+
+    persist_failed = False
+    if not args.no_write:
+        s = report["summary"]
+        # All-skip guard: a row of {pass:0, fail:0, skip:10} is noise — it
+        # means the operator ran offline or with all credentials missing.
+        # Don't pollute operator_ui.verifications with such rows.
+        if s["pass"] + s["fail"] > 0:
+            op_url = os.environ.get("SUPABASE_OPERATOR_URL", "")
+            op_key = os.environ.get("SUPABASE_OPERATOR_SERVICE_ROLE_KEY", "")
+            try:
+                _persist_verification(op_url, op_key, run_row["id"], report)
+            except RuntimeError as e:
+                print(f"verify: persistence failed — {e}", file=sys.stderr)
+                persist_failed = True
+        else:
+            print("verify: all checks skipped, not persisting.", file=sys.stderr)
+
+    if persist_failed:
+        return 1
 
     # Stage 11.5 contract: the SKILL.md hook uses `|| true`, so the exit
     # code is advisory. We still reflect fail count in the exit code so

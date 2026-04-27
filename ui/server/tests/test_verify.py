@@ -279,6 +279,30 @@ def test_ultravox_404_fails_check_one_and_skips_dependents(monkeypatch):
         assert by_id[cid]["status"] == "skip", by_id[cid]
 
 
+def test_telnyx_404_fails_check_5_and_skips_dependents(monkeypatch):
+    """Documents the cascade choice: when phone_numbers GET 404s, check 5
+    is 'fail' and checks 6 (call routing) + 7 (webhook callback) 'skip' —
+    we can't inspect routing or callbacks without a phone_number row.
+    Mirrors test_ultravox_404_fails_check_one_and_skips_dependents for the
+    Telnyx side of the chain (I4 cascade)."""
+    _happy_env(monkeypatch)
+    mod = _import_module()
+    routes = _all_routes_happy()
+    routes["GET https://api.telnyx.com/v2/phone_numbers"] = [
+        _FakeHTTPError("https://api.telnyx.com/v2/phone_numbers", 404, {"errors": [{"title": "not found"}]})
+    ]
+    fake, _calls = _router(routes)
+    with patch("verify_under_test.urllib.request.urlopen", fake):
+        report, _ = mod.run_verification(SLUG)
+    by_id = {c["id"]: c for c in report["checks"]}
+    assert by_id["telnyx-did-active"]["status"] == "fail"
+    assert "404" in by_id["telnyx-did-active"]["detail"]
+    assert by_id["telnyx-call-routing-wired"]["status"] == "skip"
+    assert "lookup failed" in by_id["telnyx-call-routing-wired"]["detail"]
+    assert by_id["webhook-callback-set"]["status"] == "skip"
+    assert "no connection_id" in by_id["webhook-callback-set"]["detail"]
+
+
 def test_reference_agent_404_skips_checks_2_and_4(monkeypatch):
     _happy_env(monkeypatch)
     mod = _import_module()
