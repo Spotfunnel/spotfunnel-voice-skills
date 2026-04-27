@@ -60,7 +60,8 @@ for r in rows:
 print(json.dumps(seen))
 ' "$FB_ROWS")"
 
-# Next L-NNN id. Atomic-ish via select max + increment.
+# Pick next L-NNN. Not atomic: under concurrent runs the loser hits a PK
+# conflict and halts. That's acceptable for the single-operator workflow.
 EXISTING="$(supabase_get "lessons?id=like.L-%25&select=id&order=id.desc&limit=1")"
 NEW_ID="$(python3 -c '
 import json, re, sys
@@ -94,11 +95,28 @@ if not isinstance(d, list) or not d or d[0].get("id") != sys.argv[2]:
     sys.exit(1)
 ' "$LESSON_RESP" "$NEW_ID"
 
-# Mark each feedback row elevated.
+# Mark each feedback row elevated. Validate the PATCH actually flipped every
+# row — RLS or a stale id list could leave us half-elevated (lesson exists,
+# feedback rows still 'open'), and on the next refine the operator would be
+# re-prompted to elevate the same cluster. We can't transactionally roll back
+# the lesson row from a shell script, so on mismatch we halt loudly and let
+# the operator clean up manually.
 PATCH_BODY="$(python3 -c '
 import json, sys
 print(json.dumps({"status": "elevated", "elevated_to_lesson_id": sys.argv[1]}))
 ' "$NEW_ID")"
-supabase_patch "feedback?id=${IN_FILTER}" "$PATCH_BODY" >/dev/null
+PATCH_RESP="$(supabase_patch "feedback?id=${IN_FILTER}" "$PATCH_BODY")"
+python3 -c '
+import json, sys
+d = json.loads(sys.argv[1] or "[]")
+expected = int(sys.argv[2])
+if not isinstance(d, list) or len(d) != expected:
+    sys.stderr.write(
+        f"refine-elevate-cluster: feedback PATCH updated {len(d) if isinstance(d, list) else 0} "
+        f"rows, expected {expected}. Lesson {sys.argv[3]} was inserted but feedback "
+        f"rows are not all elevated — manual cleanup required. Response: {sys.argv[1]}\n"
+    )
+    sys.exit(1)
+' "$PATCH_RESP" "$ID_COUNT" "$NEW_ID"
 
 echo "$NEW_ID"

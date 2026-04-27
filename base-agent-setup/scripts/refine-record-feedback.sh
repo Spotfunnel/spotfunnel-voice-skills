@@ -50,6 +50,8 @@ TODAY="$(python3 -c 'from datetime import datetime, timezone; print(datetime.now
 PREFIX="F-${TODAY}-"
 
 # Find the highest existing F-YYYY-MM-DD-NNN id for today and increment.
+# Not atomic: under concurrent runs the loser hits a PK conflict and halts.
+# That's acceptable for the single-operator workflow.
 EXISTING="$(supabase_get "feedback?id=like.${PREFIX}%25&select=id&order=id.desc&limit=1")"
 NEXT_NUM="$(python3 -c '
 import json, re, sys

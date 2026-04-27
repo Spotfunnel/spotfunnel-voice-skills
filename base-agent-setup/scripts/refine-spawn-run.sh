@@ -5,10 +5,11 @@
 # pointing at the source. Copy every artifact from the source run into the
 # new run as the baseline (the "before" the refine patches apply).
 #
-# Stdout: the new run's slug_with_ts (one line). State env exports are NOT
-# done here because this is a one-shot helper; the orchestrator captures the
-# slug_with_ts and either calls state_resume_from-style helpers or sets
-# STATE_RUN_ID/STATE_RUN_DIR itself when applying patches.
+# Stdout: the new run's slug_with_ts and id, tab-separated, on one line:
+#   <slug_with_ts>\t<run_uuid>
+# So the orchestrator can capture both with a single `read`:
+#   read -r NEW_SLUG_TS NEW_RUN_ID < <(bash scripts/refine-spawn-run.sh "$SLUG")
+# State env exports are NOT done here because this is a one-shot helper.
 #
 # Halt-on-error: customer-not-found, no-runs, insert-failure → stderr + exit 1.
 
@@ -103,4 +104,4 @@ if [ "$COUNT" -gt 0 ]; then
 fi
 rm -f /tmp/.refine-artifacts-$$.json
 
-echo "$NEW_SLUG_TS"
+printf '%s\t%s\n' "$NEW_SLUG_TS" "$NEW_RUN_ID"

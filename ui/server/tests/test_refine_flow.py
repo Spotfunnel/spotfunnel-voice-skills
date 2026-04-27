@@ -210,20 +210,33 @@ def test_list_annotations_missing_slug_halts():
 # -------- 2. refine-spawn-run.sh -------------------------------------------
 
 
+def _parse_spawn_stdout(stdout: str) -> tuple[str, str]:
+    """refine-spawn-run.sh prints '<slug_with_ts>\\t<run_uuid>\\n'."""
+    line = stdout.strip()
+    parts = line.split("\t")
+    assert len(parts) == 2, (
+        f"refine-spawn-run.sh must print two tab-separated values, got {line!r}"
+    )
+    return parts[0], parts[1]
+
+
 @pytest.mark.integration
 def test_spawn_run_creates_new_run_with_refined_from_pointer(fixture_run):
     base, key = _skip_unless_env()
     rest = f"{base.rstrip('/')}/rest/v1"
     result = _run_script("refine-spawn-run.sh", fixture_run["slug"])
     assert result.returncode == 0, result.stderr
-    new_slug_ts = result.stdout.strip()
+    new_slug_ts, new_run_id = _parse_spawn_stdout(result.stdout)
     assert new_slug_ts.startswith(f"{fixture_run['slug']}-refine-")
+    # new_run_id is the UUID PostgREST returned; sanity-check shape.
+    assert re.match(r"^[0-9a-f-]{36}$", new_run_id), new_run_id
     with httpx.Client(timeout=15.0, headers=_hdr(key)) as c:
         rows = c.get(
             f"{rest}/runs?slug_with_ts=eq.{new_slug_ts}"
             "&select=id,refined_from_run_id,customer_id"
         ).json()
         assert len(rows) == 1
+        assert rows[0]["id"] == new_run_id
         assert rows[0]["refined_from_run_id"] == fixture_run["run_id"]
         assert rows[0]["customer_id"] == fixture_run["customer_id"]
 
@@ -234,17 +247,14 @@ def test_spawn_run_copies_artifacts_forward(fixture_run):
     rest = f"{base.rstrip('/')}/rest/v1"
     result = _run_script("refine-spawn-run.sh", fixture_run["slug"])
     assert result.returncode == 0, result.stderr
-    new_slug_ts = result.stdout.strip()
+    _, new_run_id = _parse_spawn_stdout(result.stdout)
     with httpx.Client(timeout=15.0, headers=_hdr(key)) as c:
-        new_run = c.get(
-            f"{rest}/runs?slug_with_ts=eq.{new_slug_ts}&select=id"
-        ).json()[0]
         old_arts = c.get(
             f"{rest}/artifacts?run_id=eq.{fixture_run['run_id']}"
             "&select=artifact_name,content"
         ).json()
         new_arts = c.get(
-            f"{rest}/artifacts?run_id=eq.{new_run['id']}"
+            f"{rest}/artifacts?run_id=eq.{new_run_id}"
             "&select=artifact_name,content"
         ).json()
         old_map = {a["artifact_name"]: a["content"] for a in old_arts}
@@ -267,11 +277,7 @@ def test_resolve_annotation_flips_status_and_records_classification(fixture_run)
     # run.id for resolved_by_run_id, FK enforced.
     spawn = _run_script("refine-spawn-run.sh", fixture_run["slug"])
     assert spawn.returncode == 0, spawn.stderr
-    new_slug_ts = spawn.stdout.strip()
-    with httpx.Client(timeout=15.0, headers=_hdr(key)) as c:
-        new_run_id = c.get(
-            f"{rest}/runs?slug_with_ts=eq.{new_slug_ts}&select=id"
-        ).json()[0]["id"]
+    _, new_run_id = _parse_spawn_stdout(spawn.stdout)
 
     result = _run_script(
         "refine-resolve-annotation.sh", aid, new_run_id, "per-run"
@@ -289,14 +295,20 @@ def test_resolve_annotation_flips_status_and_records_classification(fixture_run)
 
 
 @pytest.mark.integration
-def test_resolve_annotation_rejects_invalid_classification(fixture_run):
+@pytest.mark.parametrize("bad_class", ["garbage-class", "mixed", "Per-Run", ""])
+def test_resolve_annotation_rejects_invalid_classification(fixture_run, bad_class):
+    """Only 'per-run' and 'feedback' are accepted. 'mixed' was a phantom value
+    in the M12 implementation — the design doc, the TS union, and the column
+    never carried it. The orchestrator's mixed-branch resolves as 'feedback'."""
     aid = fixture_run["open_ids"][0]
     fake_run_id = str(uuid4())
     result = _run_script(
-        "refine-resolve-annotation.sh", aid, fake_run_id, "garbage-class"
+        "refine-resolve-annotation.sh", aid, fake_run_id, bad_class
     )
     assert result.returncode != 0
-    assert "classification" in result.stderr.lower()
+    # Empty arg trips the usage check, not the classification check.
+    if bad_class:
+        assert "classification" in result.stderr.lower()
 
 
 # -------- 4. refine-record-feedback.sh -------------------------------------

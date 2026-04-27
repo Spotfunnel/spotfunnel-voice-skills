@@ -875,9 +875,18 @@ Walk `/tmp/refine-anns.jsonl` one annotation at a time. For each one:
    bash scripts/refine-record-feedback.sh "$ANN_ID"
    bash scripts/refine-resolve-annotation.sh "$ANN_ID" "$NEW_RUN_ID" feedback
    # Mixed (operator answered Y on the behavior half):
+   #   1. Record the feedback row first (durable record of the behavior half;
+   #      its source_annotation_id points back to this annotation).
+   #   2. Then resolve the annotation with classification=feedback. The
+   #      mixed-ness is implicit — the feedback row exists for the annotation
+   #      AND the regenerated artifact silently absorbs the factual half.
    bash scripts/refine-record-feedback.sh "$ANN_ID" "<behavior-half-extract>"
-   bash scripts/refine-resolve-annotation.sh "$ANN_ID" "$NEW_RUN_ID" mixed
+   bash scripts/refine-resolve-annotation.sh "$ANN_ID" "$NEW_RUN_ID" feedback
    ```
+
+   The stored `resolved_classification` column only takes `per-run` or `feedback`
+   (matches the design doc + the `ui/web/lib/types.ts` union). "Mixed" is how
+   you THINK about the annotation, not a value you store.
 
    `$NEW_RUN_ID` doesn't exist yet — defer the resolve calls until after Step 5 spawns the new run. Hold the classification decisions in working memory.
 
@@ -905,20 +914,13 @@ If the operator says Y, mark every downstream artifact for regeneration too.
 Spawn the new run:
 
 ```bash
-NEW_SLUG_TS="$(bash scripts/refine-spawn-run.sh "$SLUG")"
+read -r NEW_SLUG_TS NEW_RUN_ID < <(bash scripts/refine-spawn-run.sh "$SLUG")
 export STATE_RUN_ID="$NEW_SLUG_TS"
 export STATE_RUN_DIR="base-agent-setup/runs/$NEW_SLUG_TS"
 mkdir -p "$STATE_RUN_DIR"
-NEW_RUN_ID="$(bash scripts/state.sh state_get_next_stage >/dev/null; \
-  curl --ssl-no-revoke -sS \
-    -H "apikey: $SUPABASE_OPERATOR_SERVICE_ROLE_KEY" \
-    -H "Authorization: Bearer $SUPABASE_OPERATOR_SERVICE_ROLE_KEY" \
-    -H "Accept-Profile: operator_ui" \
-    "$SUPABASE_OPERATOR_URL/rest/v1/runs?slug_with_ts=eq.$NEW_SLUG_TS&select=id" \
-    | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["id"])')"
 ```
 
-`refine-spawn-run.sh` creates the new `runs` row with `refined_from_run_id` pointing at the prior run, and copies every artifact from the prior run forward as the baseline.
+`refine-spawn-run.sh` creates the new `runs` row with `refined_from_run_id` pointing at the prior run, copies every artifact from the prior run forward as the baseline, and prints `<slug_with_ts>\t<run_uuid>` so a single `read` captures both.
 
 ### Step 6 — Apply per-run patches
 
@@ -953,7 +955,7 @@ Now that `$NEW_RUN_ID` exists, replay the deferred resolve calls from Step 3:
 bash scripts/refine-resolve-annotation.sh "$ANN_ID" "$NEW_RUN_ID" "$CLASS"
 ```
 
-Where `$CLASS` is one of `per-run` / `feedback` / `mixed`.
+Where `$CLASS` is one of `per-run` / `feedback` (the stored column rejects anything else). Mixed annotations resolve as `feedback` — the feedback row recorded in Step 3 is the durable record; the factual half lives in the regenerated artifact.
 
 **Halt conditions:**
 
@@ -1007,7 +1009,6 @@ The helper generates the next `L-NNN` id, inserts the lesson with `observed_in_c
 Annotations consumed:
   per-run:  N
   feedback: N
-  mixed:    N
 
 Artifacts regenerated:
   - brain-doc       (Y patches applied)

@@ -2,7 +2,10 @@
 # scripts/refine-resolve-annotation.sh <annotation_id> <new_run_id> <classification>
 #
 # Mark an annotation resolved with the new run's id and the classification
-# the orchestrator chose ('per-run' | 'feedback' | 'mixed').
+# the orchestrator chose ('per-run' | 'feedback'). The "mixed" branch in
+# the orchestrator's flow collapses to 'feedback' here — the feedback row
+# (with source_annotation_id) is the durable record of the behavior half;
+# the per-run half is applied silently in the regenerated artifact.
 #
 # Stdout: nothing on success.
 
@@ -21,9 +24,9 @@ if [ -z "$AID" ] || [ -z "$NEW_RUN_ID" ] || [ -z "$CLASS" ]; then
   exit 1
 fi
 case "$CLASS" in
-  per-run|feedback|mixed) ;;
+  per-run|feedback) ;;
   *)
-    echo "refine-resolve-annotation: classification must be per-run|feedback|mixed (got '$CLASS')" >&2
+    echo "refine-resolve-annotation: classification must be per-run|feedback (got '$CLASS')" >&2
     exit 1
     ;;
 esac
