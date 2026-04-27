@@ -219,40 +219,48 @@ Worked example of the shape (your contents will be customer-specific):
 
 This section enforces the methodology's "never re-ask" principle (principle 2) by making the already-answered items explicit up front, AND it enforces the methodology's coverage targets (§3 A–F) by making the still-open items a literal numbered to-do list ChatGPT can tick through.
 
-### 5. The bespoke first question — REQUIRED, NOT OPTIONAL — exactly ONE question, PUNCHY
+### 5. The opener — transparent gap acknowledgement + envisioning question
 
-The bespoke opener is the **entry point**, not the centrepiece. Element 4 above is the centrepiece. The opener's only job is to start the conversation in a way that is anchored in this specific customer (so the customer feels read), and that opens onto the first task in the to-do list above.
+The opener is the **entry point**, not the centrepiece. Element 4 above is the centrepiece. The opener's job is to (a) make the customer feel seen by naming what we already know we DON'T know, (b) set time expectations honestly, and (c) hand the conversation back to them with one open question they can answer in their own terms.
 
-**Hard rules — read every one:**
+**Do NOT prescribe a verbatim question for ChatGPT to deliver.** The operator does not write the opener line. ChatGPT generates the phrasing live, anchored in the gap-list above and the customer's brand voice from the brain-doc. The generator's job is to give ChatGPT the *pattern*, not the words.
 
-1. **1–2 short sentences. Hard cap ~40 words combined.** Not a paragraph. Not five sentences with em-dashes. The customer should be able to answer the question in their head before they finish reading it.
-2. **Plain language.** Banned phrasing — do **not** use any of: "throughline", "anchor scope", "anchor the scope", "before we go anywhere near", "land in the middle", "we'll work outward from there", "I want to anchor", "Tell me:" preamble, "let me reflect that back", "let me anchor", "before I dig in", "before we dig in".
-3. **Anchor in ONE concrete customer specific.** Pick the single most distinctive: a quoted brand phrase, a single named service, the published phone number, or a specific named tool from the meeting. **One** — not three. Not "Facebook, Google, email, direct mail, webinars, sales automation, the lot." Pick the one that's most distinctive to *this* business.
-4. **End with a direct question.** A single question mark. The question must be answerable mentally in one second.
-5. **Exactly ONE question.** The bespoke opener fires a single question and stops. Do not compound questions, even with "first... second..." or "and also..." framing. Do not stack a scope-confirmation question on top of a coverage question. This rule comes from methodology §3 ("one question at a time").
-6. **No long preamble.** Do not explain what the agent is, what the question is for, or why you're asking. The to-do list above already framed the work. Just ask the question.
+**Pattern ChatGPT must follow:**
 
-**GOOD examples — note the brevity, the single concrete anchor, the direct question:**
+1. **Acknowledge the biggest gaps directly.** Pull 3–5 items from the to-do list above and tell the customer these are the main things you'd want to nail to make sure the agent gets built right. This is the "transparency" beat — it shows the customer we read the brief and understand exactly what's still missing.
+2. **Set time expectations.** Tell the customer how long this will take (20–40 minutes is the working assumption) and that they can work through it at their pace — they don't need to have all the answers ready.
+3. **Pivot to one open envisioning question.** Something close to: *"But first — what are you envisioning for your voice agent? What does the dream version look like to you?"* The exact phrasing is ChatGPT's call. The point is to let the customer anchor the conversation in their own terms before any structured questioning begins.
 
-- *"Your line says 1300 793 923 — when it rings tomorrow morning, what's the single most valuable thing the agent can do for the business?"* (29 words. Anchored in the published phone number. Direct question. Customer answers in one second.)
+After that opening turn, work through the to-do list per the methodology — MCQ scaffolding, one question at a time, branch dynamically based on what the customer says.
 
-- *"You mentioned the 'Client Acquisition Formula' is your headline service — what does the agent need to nail on a call from a Formula prospect?"* (26 words. Anchored in one quoted brand phrase. Direct question.)
+**Spell this out to ChatGPT explicitly inside the discovery prompt — not as a verbatim opener for it to deliver, but as a 3-step instruction for it to enact in its first message.** Use a heading like `**Open the conversation transparently with [first name]:**` followed by the three numbered beats above, customised lightly for the brain-doc material (e.g. "voice agent" replaced with the customer's framing if they used a different term in the meeting).
 
-- *"You said Mondays are 80 calls before 1pm — what's the one thing the agent has to get right for a Monday-morning caller?"* (24 words. Anchored in a specific meeting detail. Direct question.)
+**Hard rules:**
 
-- *"Your site mentions the Profit Performance Promise — should the agent quote it on a call, or always defer to Simeon?"* (21 words. Anchored in a single brand-named program. Direct question.)
+1. **No verbatim opener prescribed.** The generator must NOT write a specific opener question for ChatGPT to deliver. It writes the 3-beat *pattern* and trusts ChatGPT to phrase the actual sentences live.
+2. **No fabricated deployment facts.** The opener must NOT anchor on routing or deployment details (which line rings the agent, what number forwards where, which tool the agent uses). Those are operator-side details the brain-doc doesn't reliably know — fabricating them ("your line at 1300 X is what the agent's about to pick up…") is a pattern that mis-states the deployment to the customer. Stick to facts the brain-doc explicitly states.
+3. **Plain language.** Banned phrasing the generator must not write into the opener instructions, and ChatGPT must not produce in its delivery: "throughline", "anchor scope", "anchor the scope", "before we go anywhere near", "land in the middle", "we'll work outward from there", "I want to anchor", "Tell me:" preamble, "let me reflect that back", "let me anchor", "before I dig in", "before we dig in".
+4. **Brevity.** ChatGPT's opening turn caps at ~120 words total across all three beats — gap acknowledgement, time-expectation, envisioning question. No paragraphs of explanation; let the to-do list above do the heavy lifting.
+5. **Single envisioning question.** The opener ends with exactly ONE question mark — the envisioning question. Not compound. Not "what are you envisioning, and what's the dream version, and what should the agent do?" — those are stacked questions. Pick one.
 
-**BAD examples — these are the patterns to avoid:**
+**GOOD instruction shape (this is what the generator emits in the discovery prompt — NOT a verbatim opener):**
 
-- *"Looking at your site, the throughline is the contrast between 'one-trick' single-channel agencies and the breadth-and-depth Client Acquisition Formula — Facebook, Google, email, direct mail, webinars, sales automation, the lot. The agent answering your line is going to land in the middle of that positioning, so before we go anywhere near integrations or call-handling, I want to anchor the scope in your terms. Tell me: when this agent picks up the phone tomorrow morning at 1300 793 923, what's the single most valuable thing it can do — book the discovery call cleanly, qualify the caller, take a structured message, or all of the above?"* (~110 words. "Throughline", "land in the middle", "anchor the scope", "before we go anywhere near", "Tell me:" preamble all banned. Six anchors instead of one. Compound multiple-choice question instead of a direct one.)
+> "**Open the conversation transparently with Kye:**
+>
+> 1. Acknowledge the biggest gaps. Pull 3–5 items from the to-do list above and tell Kye these are the main things you'd want to nail to make sure the agent gets built right.
+> 2. Set time expectations: 20–40 minutes, work through it at his pace, no need to have answers ready.
+> 3. Pivot with one open envisioning question — something like 'But first, what are you envisioning for your voice agent? What does the dream version look like to you?' Phrase it your own way, but keep it single-question.
+>
+> Wait for his answer. Match his energy. Then work through the to-do list — MCQ scaffolding, one question at a time, branch dynamically per the methodology."
 
-- *"Before I dig in, let me reflect that back: this agent's only job is X, Y, and Z. Anything outside that gets a polite handoff. Is that the scope you want, or should I broaden it?"* (Banned: "Before I dig in", "let me reflect that back". Compound question — "is that the scope, or should I broaden it" is two questions.)
+**BAD shapes (do not write these):**
 
-- *"Tell me about your business and what you'd want the agent to do for it."* (Generic. The customer's already had the meeting; they expect the conversation to start informed.)
+- A verbatim opener anchored in deployment details: *"Your sales line at 1300 95 55 33 is what Adam's about to pick up — when it rings tomorrow morning, what's the single most valuable thing he can do for the business?"* (Fabricates which line is forwarded to the agent — the brain-doc doesn't state this, and getting it wrong tells the customer we misread their setup. Also corny.)
+- A wall-of-text scoped opener with multiple anchors: *"Looking at your site, the throughline is the contrast between 'one-trick' agencies and breadth-and-depth Formula — Facebook, Google, email, direct mail, webinars, sales automation, the lot. Before we go anywhere near integrations, I want to anchor scope in your terms…"* (Banned phrasing. Six anchors. Compound question.)
+- A generic non-anchored opener: *"Tell me about your business and what you'd want the agent to do for it."* (No transparency beat, no gap-list, no time-expectation. Customer feels unheard — the meeting already happened.)
+- A verbatim opener the generator wrote for ChatGPT to repeat: any literal sentence in the discovery prompt that ChatGPT is supposed to read out unchanged. The opener is ChatGPT's to phrase, not the operator's to script.
 
-The pattern that works: **one concrete anchor → direct question.** Nothing else.
-
-If the meeting transcript is so short or vague that you genuinely cannot find a specific phrase to anchor on, anchor on **the single most distinctive thing in the brain-doc** — typically a named service, a quoted brand phrase, or the published phone number — and ask a direct question off it. Never default to a generic "tell me about your business" opener.
+The pattern that works: **3-beat instruction → ChatGPT phrases the delivery live, anchored in the brain-doc and the to-do list, ending in exactly one open envisioning question.**
 
 ### 6. Output schema reminder
 
@@ -268,7 +276,7 @@ The closing instructions to ChatGPT cover three things, in this order: how to st
 
 #### 7a. How to start
 
-> "Start with the bespoke first question above. Wait for {customer_first_name}'s reply. One question at a time. Acknowledge before moving on. Match {customer_first_name}'s energy — if they're terse, be terse; if they're chatty, be chatty."
+> "Start with the 3-beat opener above (gap-acknowledgement → time-expectation → envisioning question). Phrase it your own way; do not deliver a scripted question. Wait for {customer_first_name}'s reply. From there, one question at a time. Acknowledge before moving on. Match {customer_first_name}'s energy — if they're terse, be terse; if they're chatty, be chatty."
 
 #### 7b. How to ask — multiple-choice scaffolding
 
@@ -398,7 +406,7 @@ Before you write either file, run this checklist:
 2. **Methodology placement correct for the path.**
    - One-file path: methodology body pasted verbatim into `discovery-prompt.md`, bracketed by the opening/closing methodology markers.
    - Two-file path: methodology body pasted verbatim into `customer-context.md` under a `# Methodology` heading at the top of that file. `discovery-prompt.md` contains a one-line pointer to the attachment, NOT the methodology body.
-3. **Bespoke opener is punchy.** **Hard cap ~40 words / 1–2 sentences.** Anchored in ONE concrete customer specific (a quoted phrase, a single named service, the published phone number — pick ONE most distinctive). Ends with a direct question the customer can answer mentally in one second. **Mechanical check:** count words in your opener — if it's over 40, cut. Count question marks — if more than one, you have compound questions; rewrite. Grep the opener for any banned phrase: "throughline", "anchor scope", "anchor the scope", "before we go anywhere near", "land in the middle", "we'll work outward from there", "I want to anchor", "Tell me:" preamble, "let me reflect that back", "let me anchor", "before I dig in", "before we dig in". Match count must be zero.
+3. **Opener is a 3-beat instruction, not a verbatim question.** The discovery prompt's opener block emits a **`Open the conversation transparently with [first name]:`** heading followed by three numbered beats: (1) acknowledge gaps from the to-do list, (2) set time expectations (20–40 minutes, work at their pace), (3) pivot with one open envisioning question (e.g. "what are you envisioning for your voice agent?"). ChatGPT phrases the actual delivery live; the operator does NOT prescribe a verbatim opener question. **Mechanical checks:** (a) grep the discovery-prompt body for `Open the conversation transparently` — the literal opener heading must appear. (b) Verify the three beats are present (gap-acknowledgement, time-expectation, envisioning question). (c) Verify NO verbatim opener-question is hard-coded for ChatGPT to repeat — the opener block must read as instruction-to-ChatGPT, not as a sentence ChatGPT will deliver word-for-word. (d) Verify the opener block does NOT name fabricated deployment details (which line gets forwarded, which number rings the agent, which routing applies) — those are operator-side facts the brain-doc doesn't reliably state. (e) Grep for any banned phrase in the instruction or any examples it carries: "throughline", "anchor scope", "anchor the scope", "before we go anywhere near", "land in the middle", "we'll work outward from there", "I want to anchor", "Tell me:" preamble, "let me reflect that back", "let me anchor", "before I dig in", "before we dig in". Match count must be zero.
 4. **Known map + numbered to-do list present and visually punchy.** The "Already settled" sub-section is a short paragraph or compact bullet list. The **`Your job — get clear on these with [Customer]`** sub-section is a **numbered list (1–N), one short line per item, no semicolons, no run-ons**. Every item is **≤15 words**. The closing instruction line **`These are your tasks. Work through them. Don't skip any. The opener below is just your entry point — this list is the work.`** is present in bold below the list. **Mechanical check:** verify the to-do section renders as numbered items, not a paragraph. Verify each line is ≤15 words. Verify zero semicolons inside any item. **Mechanical check (gap propagation):** read the brain-doc's `## Knowledge Gaps` section. Every numbered item there must appear (in spirit, condensed if needed) in the to-do list. If a gap line is missing, the to-do list is incomplete — re-build per element 4b. **Mechanical check (humour/seriousness):** the to-do list must contain a humour-vs-seriousness item — grep for the substring `Humour` or `humour` — at least one match required.
 5. **No vendor names** in either output file. No model names. No infrastructure names. No internal codenames.
 6. **Cover email substitutions all resolved.** No literal `{customer_first_name}`, `{operator_first_name}`, `{{DISCOVERY_PROMPT}}`, or `{{CUSTOMER_CONTEXT_FILE_PATH}}` left in the email.
