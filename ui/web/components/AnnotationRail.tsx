@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Annotation } from "@/lib/types";
 import { relativeTime, truncate } from "@/lib/format";
+import { displayAuthor } from "@/lib/author";
 
 export type RailFilter = "open" | "resolved" | "deleted";
 
@@ -223,9 +224,10 @@ export function AnnotationRail({
                   </div>
                 )}
 
-                {/* Author + time */}
+                {/* Author + time. M22: prefer author_email's local-part;
+                    fall back to author_name for pre-M22 localStorage-era rows. */}
                 <div className="mt-2 text-xs text-[#9B9B95]">
-                  {a.author_name} · {relativeTime(a.created_at)}
+                  {displayAuthor(a)} · {relativeTime(a.created_at)}
                 </div>
 
                 {/* Actions row — only when this row's bucket matches filter,

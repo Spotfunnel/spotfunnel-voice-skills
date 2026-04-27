@@ -2,8 +2,8 @@ import { test, expect } from "./fixtures";
 
 // Drag-select → Comment chip → composer → save → highlight persists.
 //
-// localStorage seed for OperatorNameGate is provided by ./fixtures.
-// Cleanup of any annotation rows authored by "playwright" runs in the
+// M22: auth session for `leo@getspotfunnel.com` is seeded by ./fixtures.
+// Cleanup of any annotation rows authored by the test email runs in the
 // fixture beforeEach + afterEach so flake doesn't bleed between tests.
 
 const TARGET_SENTENCE =

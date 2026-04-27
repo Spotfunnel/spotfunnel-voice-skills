@@ -80,7 +80,7 @@ export default async function ArtifactPage({
     supabase
       .from("annotations")
       .select(
-        "id, run_id, artifact_name, quote, prefix, suffix, char_start, char_end, comment, status, author_name, created_at, resolved_by_run_id, resolved_classification",
+        "id, run_id, artifact_name, quote, prefix, suffix, char_start, char_end, comment, status, author_name, author_email, created_at, resolved_by_run_id, resolved_classification",
       )
       .eq("run_id", run.id)
       .eq("artifact_name", artifact)

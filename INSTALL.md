@@ -128,10 +128,20 @@ ls ~/.claude/skills/voice-stress-test/SKILL.md
 
 ### 6. Browse the operator UI
 
-<https://zero-onboarding.vercel.app>. Password: ask Leo.
+<https://zero-onboarding.vercel.app>.
 
-On first visit you'll be prompted for an operator name (stored in
-`localStorage`). Annotations you write get tagged with that name.
+Sign in with **magic link**: enter your email on the login page, click the
+link Supabase sends you. Access is restricted to two emails:
+
+- `kye@getspotfunnel.com`
+- `leo@getspotfunnel.com`
+
+Ask Leo (or Kye) to invite your email if you need access. Annotations are
+attributed to the email on your active session — no localStorage operator
+name, no impersonation possible.
+
+The Vercel password is no longer used. If you previously had it set on the
+project, it's now redundant; leave it on or turn it off as you prefer.
 
 ### 7. Run `/base-agent`
 
@@ -151,11 +161,31 @@ alongside everyone else's.
 
 - Runs + artifacts persist in shared Supabase forever after a successful
   `/base-agent`. Don't delete other operators' rows.
-- Annotations are tagged with the operator name from `localStorage` (set on
-  first UI visit). Clear `localStorage` to switch identities.
+- Annotations are attributed to your authenticated email. To switch
+  identities, sign out (top-right of the UI) and sign in as someone else.
 - Test runs against `example.com` are safe but visible — name them clearly
   (`Test Customer Inc`) and use `/onboard-customer undo <slug>` to clean up
   if needed.
+
+## Supabase Auth — manual dashboard config (one-time, on go-live)
+
+The migrations apply RLS + the `author_email` column, but Supabase project
+settings have to be configured by hand in the dashboard. Path A operators
+piggyback on Leo's project and skip this; only relevant if you're standing
+up your own backend (Path B):
+
+1. **Authentication → Providers → Email**: enable.
+2. **Authentication → URL Configuration**:
+   - Site URL: `https://zero-onboarding.vercel.app` (or your deploy URL).
+   - Redirect URLs: `https://zero-onboarding.vercel.app/auth/callback`,
+     `http://localhost:3000/auth/callback`.
+3. **Authentication → Email Templates → Magic Link**: customize subject /
+   body if desired (optional).
+4. **Authentication → Users → Invite User**: add `kye@getspotfunnel.com`
+   and `leo@getspotfunnel.com`. They'll receive a one-time link.
+5. **Optional**: turn OFF anonymous sign-in (Authentication → Settings).
+6. Apply both migrations: `migrations/operator_ui_schema.sql` then
+   `migrations/operator_ui_auth.sql`.
 
 ## Path B (own backend)
 

@@ -142,22 +142,12 @@ export function CommandPalette() {
   }, [pathname]);
 
   // Hotkey: Ctrl+K / Cmd+K toggles. Esc closes. Listens at window so it
-  // works regardless of focus. Re-checks localStorage at keypress time so
-  // the listener can attach unconditionally on mount (no race against the
-  // async useEffect that resolves `hasName`) while still refusing to open
-  // the palette before the operator name gate is satisfied.
+  // works regardless of focus. M22: gate is now Supabase-Auth + middleware
+  // — by the time this component mounts, we already have a session, so no
+  // additional check is needed here.
   useEffect(() => {
-    function nameSet(): boolean {
-      try {
-        const n = window.localStorage.getItem("operatorName");
-        return typeof n === "string" && n.trim().length > 0;
-      } catch {
-        return false;
-      }
-    }
     function onKey(e: KeyboardEvent) {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
-        if (!nameSet()) return;
         e.preventDefault();
         setOpen((v) => !v);
         return;

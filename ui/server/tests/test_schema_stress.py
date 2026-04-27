@@ -137,23 +137,43 @@ def test_slug_check_constraint_accepts_valid_inputs(service_client: httpx.Client
 # -------- 2. anon role write boundary --------------------------------------
 
 @pytest.mark.integration
-def test_anon_can_read_customers():
+@pytest.mark.parametrize(
+    "table", ["customers", "runs", "artifacts", "annotations", "feedback", "lessons", "verifications"]
+)
+def test_anon_cannot_read_anything(table: str):
+    """M22 — anon must NOT see any operator_ui data. The browser bundle anon
+    key alone is no longer enough; every read goes through Supabase Auth."""
     if not ANON_KEY:
         pytest.skip("SUPABASE_ANON_KEY unset")
     base, _ = _skip_unless_env()
     with httpx.Client(timeout=15.0) as c:
         resp = c.get(
-            _rest(base, "customers?select=id&limit=1"),
+            _rest(base, f"{table}?select=*&limit=1"),
             headers=_anon_headers(ANON_KEY),
         )
-    assert resp.status_code == 200, resp.text
+    # PostgREST returns 401/403 when the role lacks SELECT, or 200 with []
+    # (RLS hides rows but grant lets the call through). The post-M22 grant
+    # is fully revoked, so we expect 401/403/404 — anything that looks like
+    # a successful read is a security regression.
+    if resp.status_code == 200:
+        rows = resp.json()
+        assert rows == [], (
+            f"anon read on {table} returned data — RLS / grants regression: {rows!r}"
+        )
+    else:
+        assert resp.status_code in (401, 403, 404), (
+            f"anon read on {table} unexpectedly returned {resp.status_code}: {resp.text}"
+        )
 
 
 @pytest.mark.integration
-@pytest.mark.parametrize("table", ["customers", "runs", "artifacts", "verifications"])
-def test_anon_cannot_insert_into_skill_tables(table: str):
-    """The anon key is bundled into the deployed UI JS. A leak must not let
-    anyone create or destroy customer/run state."""
+@pytest.mark.parametrize(
+    "table",
+    ["customers", "runs", "artifacts", "verifications", "annotations", "feedback"],
+)
+def test_anon_cannot_insert_anywhere(table: str):
+    """M22 — the anon key in the browser bundle MUST NOT let anyone create
+    customer/run state OR forge annotations + feedback."""
     if not ANON_KEY:
         pytest.skip("SUPABASE_ANON_KEY unset")
     base, _ = _skip_unless_env()
@@ -177,50 +197,33 @@ def test_anon_cannot_insert_into_skill_tables(table: str):
             "summary": {},
             "checks": [],
         },
+        "annotations": {
+            "run_id": str(uuid4()),
+            "artifact_name": "brain-doc",
+            "quote": "q",
+            "prefix": "p",
+            "suffix": "s",
+            "char_start": 0,
+            "char_end": 1,
+            "comment": "anon forge",
+        },
+        "feedback": {
+            "id": f"F-2099-12-31-{uuid4().hex[:6]}",
+            "customer_id": str(uuid4()),
+            "run_id": str(uuid4()),
+            "source_annotation_id": str(uuid4()),
+            "artifact_name": "brain-doc",
+            "quote": "q",
+            "comment": "anon forge",
+        },
     }[table]
     with httpx.Client(timeout=15.0) as c:
         resp = c.post(
             _rest(base, table), headers=_anon_headers(ANON_KEY), json=payload
         )
-    # PostgREST returns 401/403/42501 (permission denied) when the role lacks INSERT.
-    # Empty-array success (200/201 with []) is also a fail-closed signal we should
-    # NOT see — but we explicitly assert non-success.
     assert resp.status_code in (401, 403, 404), (
         f"anon should not insert into {table}; got {resp.status_code}: {resp.text}"
     )
-
-
-@pytest.mark.integration
-def test_anon_can_insert_annotation_when_run_exists(
-    service_client: httpx.Client, customer: dict
-):
-    """Anon role IS allowed to write annotations — that's the operator surface."""
-    if not ANON_KEY:
-        pytest.skip("SUPABASE_ANON_KEY unset")
-    base, _ = _skip_unless_env()
-    payload = {
-        "run_id": customer["run_id"],
-        "artifact_name": "brain-doc",
-        "quote": "stress quote",
-        "prefix": "p",
-        "suffix": "s",
-        "char_start": 0,
-        "char_end": 12,
-        "comment": "anon write should succeed here",
-        "author_name": "stress-test",
-    }
-    with httpx.Client(timeout=15.0) as c:
-        resp = c.post(
-            _rest(base, "annotations"),
-            headers=_anon_headers(ANON_KEY),
-            json=payload,
-        )
-    assert resp.status_code in (200, 201), (
-        f"anon should write annotations; got {resp.status_code}: {resp.text}"
-    )
-    # cleanup via service role (anon DELETE works too but service is hermetic)
-    aid = resp.json()[0]["id"]
-    service_client.delete(f"/annotations?id=eq.{aid}")
 
 
 # -------- 3. FK CASCADE -----------------------------------------------------

@@ -65,7 +65,11 @@ export type Annotation = {
   char_end: number;
   comment: string;
   status: "open" | "resolved" | "orphan" | "deleted";
-  author_name: string;
+  // Pre-M22 rows used `author_name` (a localStorage string). M22+ rows use
+  // `author_email` (defaulted from the auth JWT). Legacy rows have
+  // author_email = null; UI falls back to author_name in that case.
+  author_name: string | null;
+  author_email: string | null;
   created_at: string;
   resolved_by_run_id: string | null;
   resolved_classification: "per-run" | "feedback" | null;

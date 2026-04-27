@@ -56,9 +56,10 @@ stage-by-stage spec.
 
 ## Architecture
 
-- **Operator UI** — Next.js (App Router) on Vercel. Reads server-side via
-  service-role; writes annotations + feedback browser-side via anon (RLS
-  scoped). Hosted at `zero-onboarding.vercel.app`, password-protected.
+- **Operator UI** — Next.js (App Router) on Vercel. All reads + writes go
+  through Supabase Auth (magic-link, two-email allowlist). RLS pins access
+  to `kye@getspotfunnel.com` + `leo@getspotfunnel.com`; annotations are
+  attributed to the JWT email. Hosted at `zero-onboarding.vercel.app`.
 - **Skill** — local Bash + Python under Claude Code. Scripts live in
   `base-agent-setup/scripts/`.
 - **State backend** — `operator_ui` schema in Supabase Postgres. When

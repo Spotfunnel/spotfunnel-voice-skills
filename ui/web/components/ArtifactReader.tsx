@@ -9,6 +9,7 @@ import { captureSelection, type AnnotationAnchor } from "@/lib/highlight";
 import type { Annotation } from "@/lib/types";
 import { AnnotationRail, type RailFilter } from "@/components/AnnotationRail";
 import { relativeTime, truncate } from "@/lib/format";
+import { displayAuthor } from "@/lib/author";
 
 type Props = {
   content: string;
@@ -126,7 +127,7 @@ function applyHighlights(
         mark.style.borderRadius = "2px";
         mark.style.padding = "0 2px";
         mark.style.cursor = "pointer";
-        mark.title = `${truncate(ann.comment, 60)} — ${ann.author_name}, ${relativeTime(ann.created_at)}`;
+        mark.title = `${truncate(ann.comment, 60)} — ${displayAuthor(ann)}, ${relativeTime(ann.created_at)}`;
         mark.textContent = text;
         // Click opens the rail focused on this annotation. We bind a closure
         // here rather than rely on event delegation so multiple rebuilds
@@ -282,18 +283,11 @@ export function ArtifactReader({
     const trimmed = comment.trim();
     if (!trimmed) return;
 
-    const stored =
-      typeof window !== "undefined"
-        ? window.localStorage.getItem("operatorName")
-        : null;
-    const authorName = stored?.trim();
-    if (!authorName) {
-      setError("Operator name missing — please refresh the page to set your name.");
-      return;
-    }
-
     setSaving(true);
     setError(null);
+    // M22: author_email defaults to (auth.jwt() ->> 'email') at the column
+    // level, so we deliberately don't pass it. The RLS policy enforces that
+    // it matches the caller's JWT email, blocking impersonation.
     const { error: insertErr } = await browserSupabase
       .from("annotations")
       .insert({
@@ -305,7 +299,6 @@ export function ArtifactReader({
         char_start: popover.anchor.charStart,
         char_end: popover.anchor.charEnd,
         comment: trimmed,
-        author_name: authorName,
         status: "open",
       });
     setSaving(false);

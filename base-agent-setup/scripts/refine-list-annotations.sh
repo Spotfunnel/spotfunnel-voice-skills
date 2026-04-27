@@ -7,7 +7,7 @@
 # Output schema (per line):
 #   {"id": "...", "run_id": "...", "artifact_name": "...",
 #    "char_start": N, "char_end": M, "quote": "...", "comment": "...",
-#    "author_name": "...", "created_at": "..."}
+#    "author_name": "...", "author_email": "...", "created_at": "..."}
 #
 # Halt-on-error: customer-not-found / no-runs / non-200 → stderr + exit 1.
 # Zero open annotations → empty stdout, exit 0.
@@ -40,7 +40,7 @@ fi
 
 # Fetch open annotations ordered by (artifact_name, char_start). PostgREST
 # multi-column ordering uses comma-separated `order=`.
-RESP="$(supabase_get "annotations?run_id=eq.${RUN_ID}&status=eq.open&order=artifact_name.asc,char_start.asc&select=id,run_id,artifact_name,char_start,char_end,quote,comment,author_name,created_at")"
+RESP="$(supabase_get "annotations?run_id=eq.${RUN_ID}&status=eq.open&order=artifact_name.asc,char_start.asc&select=id,run_id,artifact_name,char_start,char_end,quote,comment,author_name,author_email,created_at")"
 
 python3 -c '
 import json, sys
