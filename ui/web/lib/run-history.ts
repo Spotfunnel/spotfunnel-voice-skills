@@ -28,6 +28,16 @@ type RunRow = {
   refined_from_run_id: string | null;
 };
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Returns the runId verbatim when it's a syntactically-valid UUID, or null
+// otherwise. Pages should call notFound() on null to keep malformed input
+// from reaching Postgrest (which would 400 with "invalid input syntax for
+// type uuid" and bubble up as a 500).
+export function validateRunId(runId: string): string | null {
+  return UUID_RE.test(runId) ? runId : null;
+}
+
 function shortStamp(iso: string): string {
   const d = new Date(iso);
   const day = d.getUTCDate();

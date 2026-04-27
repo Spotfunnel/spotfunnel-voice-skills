@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getServerSupabase } from "@/lib/supabase-server";
+import { validateRunId } from "@/lib/run-history";
 import { ArtifactReader } from "@/components/ArtifactReader";
 import {
   ARTIFACT_ORDER,
@@ -25,6 +26,9 @@ export default async function RunScopedArtifactPage({
   if (!ARTIFACT_SLUGS.has(artifact)) {
     notFound();
   }
+  // Reject malformed run ids before they hit Postgrest (which would 400
+  // with "invalid input syntax for type uuid" and surface as a 500).
+  if (!validateRunId(runId)) notFound();
 
   const supabase = await getServerSupabase();
 

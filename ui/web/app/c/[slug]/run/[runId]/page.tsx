@@ -4,7 +4,7 @@ import { getServerSupabase } from "@/lib/supabase-server";
 import { ChapterRow } from "@/components/ChapterRow";
 import { RunHistorySwitcher } from "@/components/RunHistorySwitcher";
 import { InspectDeploymentLink } from "@/components/InspectDeploymentLink";
-import { loadRunHistory } from "@/lib/run-history";
+import { loadRunHistory, validateRunId } from "@/lib/run-history";
 import {
   ARTIFACT_ORDER,
   type Customer,
@@ -31,6 +31,9 @@ export default async function RunScopedCustomerPage({
   params: Promise<{ slug: string; runId: string }>;
 }) {
   const { slug, runId } = await params;
+  // Reject malformed run ids before they hit Postgrest (which would 400
+  // with "invalid input syntax for type uuid" and surface as a 500).
+  if (!validateRunId(runId)) notFound();
   const supabase = await getServerSupabase();
 
   const { data: customerRow, error: customerError } = await supabase

@@ -142,10 +142,22 @@ export function CommandPalette() {
   }, [pathname]);
 
   // Hotkey: Ctrl+K / Cmd+K toggles. Esc closes. Listens at window so it
-  // works regardless of focus.
+  // works regardless of focus. Re-checks localStorage at keypress time so
+  // the listener can attach unconditionally on mount (no race against the
+  // async useEffect that resolves `hasName`) while still refusing to open
+  // the palette before the operator name gate is satisfied.
   useEffect(() => {
+    function nameSet(): boolean {
+      try {
+        const n = window.localStorage.getItem("operatorName");
+        return typeof n === "string" && n.trim().length > 0;
+      } catch {
+        return false;
+      }
+    }
     function onKey(e: KeyboardEvent) {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+        if (!nameSet()) return;
         e.preventDefault();
         setOpen((v) => !v);
         return;
@@ -202,7 +214,9 @@ export function CommandPalette() {
     let cancelled = false;
     (async () => {
       // Resolve run_id: either the explicit one in the URL or the latest
-      // for this customer.
+      // for this customer. Each await may resolve after the operator has
+      // navigated to a different artifact, so we guard between hops to
+      // avoid setAnnotations() landing on a stale render.
       let runId = ctx.runId;
       if (!runId) {
         const { data: cRow } = await browserSupabase
@@ -210,6 +224,7 @@ export function CommandPalette() {
           .select("id")
           .eq("slug", ctx.slug)
           .maybeSingle();
+        if (cancelled) return;
         if (cRow) {
           const { data: rRow } = await browserSupabase
             .from("runs")
@@ -218,6 +233,7 @@ export function CommandPalette() {
             .order("started_at", { ascending: false })
             .limit(1)
             .maybeSingle();
+          if (cancelled) return;
           runId = (rRow as { id: string } | null)?.id ?? null;
         }
       }
