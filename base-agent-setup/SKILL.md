@@ -742,6 +742,52 @@ If `state_stage_complete 11` already ran (the state shows stage 11 done), Stage 
 
 ---
 
+## Stage 11.5 — Post-onboarding verification (advisory)
+
+**Goal:** run 10 deterministic checks against the live agent, DID, and dashboard wiring. Surface drift before the operator's first test call.
+
+This stage is **advisory only**. Failures don't halt onboarding, don't roll back state, and don't block resume / handoff. The report lands in `operator_ui.verifications` keyed by the run id. Operators see a [PASS]/[FAIL]/[SKIP] summary; the operator UI's Inspect view (v2) will surface the same data.
+
+### What to do
+
+```bash
+python -m server.verify --slug "$SLUG" || true
+```
+
+The `|| true` is load-bearing: a failed check returns exit 2, but Stage 11 is already complete and the customer onboarding is done. We surface the report and move on.
+
+Run from `base-agent-setup/` so `python -m server.verify` resolves the module. From elsewhere:
+
+```bash
+python base-agent-setup/server/verify.py --slug "$SLUG" || true
+```
+
+### What gets checked
+
+1. Ultravox agent exists and live (state.ultravox_agent_id → GET /api/agents/{id})
+2. Voice + temperature match the operator's reference agent
+3. systemPrompt > 500 chars
+4. selectedTools array length matches reference
+5. Telnyx DID is `active` (state.telnyx_did → GET /v2/phone_numbers)
+6. DID has a connection_id wired (TeXML app)
+7. TeXML app `status_callback` is non-empty
+8. Customer dashboard `workspaces` row exists (skips when SUPABASE_URL unset / table 404)
+9. Customer dashboard `users` row exists (same skip rules)
+10. n8n error-reporter workflow is `active` (skips when N8N_* env unset)
+
+Each row carries `{id, title, status: pass|fail|skip, ms, detail, remediation?}`. Failures include the exact existing script to re-run.
+
+### Skip vs fail
+
+- **Skip** = the check couldn't run (env missing, table not provisioned, reference agent unfetchable). Skips never count against the run.
+- **Fail** = the check ran and found a real problem. Surface verbatim; don't auto-fix.
+
+### Resume note
+
+Stage 11.5 runs every time Stage 11 completes — including on resume. It's idempotent and read-only (except for the persistence write to `operator_ui.verifications`).
+
+---
+
 ## Final output
 
 Once Stage 11 completes, print this block to the operator with state values substituted:
@@ -1198,6 +1244,41 @@ Phase 1 always reads `feedback?status=eq.open` and phase 2 always reads `lessons
 
 ---
 
+## Sub-command: `/base-agent verify [customer-slug]`
+
+Runs the same 10 deterministic checks as Stage 11.5 against the customer's most recent run. Useful for re-checks after suspected drift, or when an operator wants to confirm an agent is still healthy weeks after onboarding.
+
+### What to do
+
+```bash
+SLUG="<customer-slug>"
+python -m server.verify --slug "$SLUG"
+```
+
+Run from `base-agent-setup/`. Add `--include-call` to also place a real Telnyx call to the customer's DID and immediately hang up (M17). The `--include-call` flag is **opt-in only** — never run it without explicit operator request, as it triggers a real outbound call.
+
+Optional flags:
+
+- `--include-call` — adds the 11th check (programmatic Telnyx call → hangup). Requires `TELNYX_TEST_FROM_NUMBER` + `TELNYX_TEST_CONNECTION_ID` env vars (or the legacy `TELNYX_FROM_NUMBER` / `TELNYX_CONNECTION_ID` names — both are honored).
+- `--no-write` — skip persisting to `operator_ui.verifications`. Use during dev / dry runs.
+- `--json` — emit the report as JSON instead of the default human-readable layout.
+
+### What the operator sees
+
+A line per check with `[PASS]` / `[FAIL]` / `[SKIP]`, elapsed ms, a short detail string, and (on failures) the exact existing script to re-run as the remediation hint. Skips never count against the run — they indicate the check couldn't apply (e.g. dashboard schema not provisioned, reference agent unfetchable).
+
+### Halt conditions
+
+- Slug doesn't resolve to a customer / run → halt: *"No run found for `<slug>`. Did you mean a different slug?"*
+- `SUPABASE_OPERATOR_URL` / `SUPABASE_OPERATOR_SERVICE_ROLE_KEY` unset → halt: *"Operator UI Supabase env not configured."*
+- Individual check failures are NOT halt conditions — they land as `fail` rows in the report.
+
+### Resume note
+
+Verify is read-only (except for the persistence write to `operator_ui.verifications` and check 11's outbound call when opted in). Re-running creates a new row keyed by run id; nothing else changes.
+
+---
+
 ## Commands
 
 | Command | Behavior |
@@ -1208,6 +1289,7 @@ Phase 1 always reads `feedback?status=eq.open` and phase 2 always reads `lessons
 | `/base-agent status [slug]` | Read-only. Prints the state file's `stages` block and the file inventory in the run-dir without running anything. Use for audit or to see where a halted run left off. |
 | `/base-agent refine [slug]` | Walk open annotations on the latest run, classify per-run vs feedback, spawn a new run with `refined_from_run_id`, regenerate affected artifacts, probe for elevation to lessons. See "Sub-command: /base-agent refine" above. |
 | `/base-agent review-feedback` | Cluster cross-customer feedback into lessons (phase 1), then bake mature lessons into generator prompt files (phase 2). See "Sub-command: /base-agent review-feedback" above. |
+| `/base-agent verify [slug]` | Runs the 10 deterministic checks (11 with `--include-call`) against the most recent run for the slug. Same checks Stage 11.5 runs advisory after every onboarding. See "Sub-command: /base-agent verify" above. |
 
 ---
 
