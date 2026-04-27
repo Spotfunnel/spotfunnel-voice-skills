@@ -3,6 +3,7 @@ import { getServerSupabase } from "@/lib/supabase-server";
 import { ChapterRow } from "@/components/ChapterRow";
 import { RunHistorySwitcher } from "@/components/RunHistorySwitcher";
 import { InspectDeploymentLink } from "@/components/InspectDeploymentLink";
+import { CommandPaletteHint } from "@/components/CommandPaletteHint";
 import { loadRunHistory } from "@/lib/run-history";
 import {
   ARTIFACT_ORDER,
@@ -102,6 +103,7 @@ export default async function CustomerPage({
 
   return (
     <main className="min-h-screen p-12 bg-[#FAFAF7] text-[#1A1A1A]">
+      <CommandPaletteHint />
       <div className="max-w-2xl">
         <h1 className="text-3xl font-medium">{customer.name}</h1>
         <hr className="mt-4 border-t border-[#E5E5E0]" />

@@ -2,10 +2,25 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getServerSupabase } from "@/lib/supabase-server";
 import { dotColor, dotHex } from "@/lib/verification";
+import { CopyCommandButton } from "@/components/CopyCommandButton";
 import type { Customer, VerificationSummary } from "@/lib/types";
 
-// M20 Inspect view stub. Read-only JSON dump of the latest verification row
-// for the customer's latest run. Replaced by a structured checklist in v2.
+// M20 → M24: structured Inspect view. The verification row is shaped as
+// `{summary: {pass, fail, skip}, checks: [{id, title, status, detail,
+// remediation?}, ...]}`. Older code (M20) dumped the raw JSON; M24 surfaces
+// the data as a checklist with copyable remediations and keeps the JSON
+// available below as a collapsible <details> block for debugging.
+
+type CheckRow = {
+  id?: string;
+  title?: string;
+  status?: "pass" | "fail" | "skip" | string;
+  detail?: string;
+  remediation?: string;
+  // Some seed fixtures use `name` instead of `title`/`id`. Tolerate it.
+  name?: string;
+  ms?: number;
+};
 
 type VerificationRow = {
   id: string;
@@ -81,18 +96,27 @@ export default async function InspectPage({
         {verification ? (
           <InspectBody verification={verification} customerSlug={customer.slug} />
         ) : (
-          <p
-            className="mt-8 text-sm text-[#6B6B6B]"
-            data-testid="inspect-empty"
-          >
-            Not yet verified &middot;{" "}
-            <code className="font-mono text-[13px]">
-              Run /base-agent verify {customer.slug} to populate this view.
-            </code>
-          </p>
+          <EmptyState slug={customer.slug} />
         )}
       </div>
     </main>
+  );
+}
+
+function EmptyState({ slug }: { slug: string }) {
+  const command = `/base-agent verify ${slug}`;
+  return (
+    <div className="mt-8" data-testid="inspect-empty">
+      <p className="text-sm text-[#6B6B6B]">
+        Verification hasn&rsquo;t run yet. The next /base-agent onboarding will
+        run it automatically. To run it manually now: have someone with skill
+        access run{" "}
+        <code className="font-mono text-[13px] text-[#1A1A1A]">{command}</code>.
+      </p>
+      <div className="mt-4">
+        <CopyCommandButton command={command} label="Copy command" />
+      </div>
+    </div>
   );
 }
 
@@ -104,6 +128,9 @@ function InspectBody({
   customerSlug: string;
 }) {
   const color = dotColor(verification.summary);
+  const checks = Array.isArray(verification.checks)
+    ? (verification.checks as CheckRow[])
+    : [];
   const payload = {
     summary: verification.summary,
     checks: verification.checks,
@@ -129,60 +156,84 @@ function InspectBody({
         <span className="font-mono text-xs">/c/{customerSlug}/inspect</span>
       </div>
 
-      <pre
-        className="mt-6 bg-white border border-[#E5E5E0] rounded-md p-5 text-[12.5px] leading-relaxed font-mono text-[#1A1A1A] overflow-x-auto whitespace-pre"
-        data-testid="inspect-json"
+      <ul
+        className="mt-6 divide-y divide-[#F0F0EC] border border-[#E5E5E0] rounded-md bg-white"
+        data-testid="inspect-checks"
       >
-        <JsonHighlight json={json} />
-      </pre>
+        {checks.length === 0 ? (
+          <li className="px-5 py-4 text-sm text-[#6B6B6B]">No checks recorded.</li>
+        ) : (
+          checks.map((c, i) => (
+            <CheckRowItem key={c.id ?? c.name ?? i} check={c} />
+          ))
+        )}
+      </ul>
+
+      <details className="mt-8 group" data-testid="inspect-raw-details">
+        <summary className="cursor-pointer text-sm text-[#6B6B6B] hover:text-[#1A1A1A] select-none">
+          Raw verification data <span className="ml-1">&#9662;</span>
+        </summary>
+        <pre
+          className="mt-3 bg-white border border-[#E5E5E0] rounded-md p-5 text-[12.5px] leading-relaxed font-mono text-[#1A1A1A] overflow-x-auto whitespace-pre"
+          data-testid="inspect-json"
+        >
+          {json}
+        </pre>
+      </details>
     </div>
   );
 }
 
-// Minimal regex-based JSON syntax highlighter so the route stays a Server
-// Component (no client deps). Tokens: keys (purple-ish), strings (green-ish),
-// numbers (blue-ish), bool/null (orange-ish). Matches the warm palette.
-function JsonHighlight({ json }: { json: string }) {
-  const re =
-    /("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+-]?\d+)?)/g;
-  const parts: Array<{ key: string; text: string; color: string | null }> = [];
-  let last = 0;
-  let i = 0;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(json)) !== null) {
-    if (m.index > last) {
-      parts.push({
-        key: `t${i++}`,
-        text: json.slice(last, m.index),
-        color: null,
-      });
-    }
-    const tok = m[0];
-    let color: string;
-    if (/^"/.test(tok)) {
-      color = /:\s*$/.test(tok) ? "#7B3F9F" : "#3F8E5C";
-    } else if (/true|false|null/.test(tok)) {
-      color = "#B8651D";
-    } else {
-      color = "#2F5BB0";
-    }
-    parts.push({ key: `t${i++}`, text: tok, color });
-    last = m.index + tok.length;
+function CheckRowItem({ check }: { check: CheckRow }) {
+  const status = (check.status ?? "skip").toLowerCase();
+  const title = check.title ?? check.id ?? check.name ?? "(unnamed check)";
+  const detail = check.detail;
+  const remediation = check.remediation;
+
+  let icon = "○"; // ○ amber/skip default
+  let iconColor = dotHex("amber");
+  let label = "skip";
+  if (status === "pass") {
+    icon = "✓"; // ✓
+    iconColor = dotHex("green");
+    label = "pass";
+  } else if (status === "fail") {
+    icon = "✗"; // ✗
+    iconColor = dotHex("red");
+    label = "fail";
   }
-  if (last < json.length) {
-    parts.push({ key: `t${i++}`, text: json.slice(last), color: null });
-  }
+
   return (
-    <>
-      {parts.map((p) =>
-        p.color ? (
-          <span key={p.key} style={{ color: p.color }}>
-            {p.text}
-          </span>
-        ) : (
-          <span key={p.key}>{p.text}</span>
-        ),
-      )}
-    </>
+    <li
+      className="px-5 py-4 text-sm"
+      data-testid="inspect-check-row"
+      data-check-status={status}
+    >
+      <div className="flex items-start gap-3">
+        <span
+          className="mt-0.5 leading-none font-mono text-base"
+          style={{ color: iconColor }}
+          aria-label={label}
+        >
+          {icon}
+        </span>
+        <div className="flex-1 min-w-0">
+          <div className="font-medium text-[#1A1A1A]">{title}</div>
+          {detail ? (
+            <div className="mt-1 text-[#6B6B6B] whitespace-pre-wrap break-words">
+              {detail}
+            </div>
+          ) : null}
+          {status === "fail" && remediation ? (
+            <div className="mt-2 flex items-start gap-2">
+              <code className="flex-1 font-mono text-[12.5px] text-[#1A1A1A] bg-[#FAFAF7] border border-[#E5E5E0] rounded px-2 py-1.5 whitespace-pre-wrap break-words">
+                {remediation}
+              </code>
+              <CopyCommandButton command={remediation} label="copy" compact />
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </li>
   );
 }

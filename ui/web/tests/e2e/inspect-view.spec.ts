@@ -92,12 +92,17 @@ test.describe("M20 Inspect view", () => {
 
     await page.goto("/c/test-roster/inspect");
     await expect(page.getByTestId("inspect-empty")).toBeVisible();
+    // M24 friendlier copy: lower-case "run", surrounded by skill-access prose.
     await expect(
-      page.getByText(/Run \/base-agent verify test-roster/),
+      page.getByText(/\/base-agent verify test-roster/),
+    ).toBeVisible();
+    // The Copy command button is rendered next to the slash command.
+    await expect(
+      page.getByTestId("inspect-empty").getByTestId("copy-command-button"),
     ).toBeVisible();
   });
 
-  test("renders JSON when a verification row is seeded", async ({ page }) => {
+  test("renders structured checklist when a verification row is seeded", async ({ page }) => {
     test.skip(!SERVICE_ROLE, "needs SUPABASE_SERVICE_ROLE_KEY env var");
 
     const runId = await getLatestRunId("test-roster");
@@ -110,12 +115,83 @@ test.describe("M20 Inspect view", () => {
 
     try {
       await page.goto("/c/test-roster/inspect");
+      // M24: structured checklist — one row per check.
+      const list = page.getByTestId("inspect-checks");
+      await expect(list).toBeVisible();
+      await expect(list).toContainText("telnyx_did_active");
+      // Raw JSON is collapsible: content lives inside <details> (closed by
+      // default). Toggle it open and assert the JSON is now visible.
+      const details = page.getByTestId("inspect-raw-details");
+      await expect(details).toBeVisible();
+      await details.locator("summary").click();
       const json = page.getByTestId("inspect-json");
       await expect(json).toBeVisible();
       await expect(json).toContainText("telnyx_did_active");
       // Status dot reflects all-pass → green hex.
       const dot = page.getByTestId("inspect-page-dot");
       await expect(dot).toHaveAttribute("style", /3CB371/i);
+    } finally {
+      await deleteVerificationsForRun(runId);
+    }
+  });
+
+  test("structured checklist shows remediation copy button on failed checks", async ({ page, context }) => {
+    test.skip(!SERVICE_ROLE, "needs SUPABASE_SERVICE_ROLE_KEY env var");
+    await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+
+    const runId = await getLatestRunId("test-roster");
+    if (!runId) return;
+    await deleteVerificationsForRun(runId);
+
+    // Seed a row with a failing check that carries a remediation string.
+    const body = {
+      run_id: runId,
+      verified_at: new Date().toISOString(),
+      summary: { pass: 1, fail: 1, skip: 0 },
+      checks: [
+        {
+          id: "telnyx_did_active",
+          title: "Telnyx DID active",
+          status: "pass",
+          detail: "DID +61300000000",
+        },
+        {
+          id: "ultravox_agent_reachable",
+          title: "Ultravox agent reachable",
+          status: "fail",
+          detail: "agent_id missing",
+          remediation: "bash scripts/regenerate-agent.sh test-roster",
+        },
+      ],
+    };
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/verifications`, {
+      method: "POST",
+      headers: {
+        apikey: SERVICE_ROLE,
+        Authorization: `Bearer ${SERVICE_ROLE}`,
+        "Content-Profile": "operator_ui",
+        "Content-Type": "application/json",
+        Prefer: "return=minimal",
+      },
+      body: JSON.stringify(body),
+    });
+    expect(res.ok).toBeTruthy();
+
+    try {
+      await page.goto("/c/test-roster/inspect");
+      const list = page.getByTestId("inspect-checks");
+      await expect(list).toBeVisible();
+      // Row labelled by status — fail row carries the remediation + copy.
+      const failRow = page
+        .getByTestId("inspect-check-row")
+        .filter({ hasText: "Ultravox agent reachable" });
+      await expect(failRow).toBeVisible();
+      await expect(failRow).toContainText("regenerate-agent.sh");
+      const copyBtn = failRow.getByTestId("copy-command-button");
+      await expect(copyBtn).toBeVisible();
+      await copyBtn.click();
+      const clip = await page.evaluate(() => navigator.clipboard.readText());
+      expect(clip).toBe("bash scripts/regenerate-agent.sh test-roster");
     } finally {
       await deleteVerificationsForRun(runId);
     }

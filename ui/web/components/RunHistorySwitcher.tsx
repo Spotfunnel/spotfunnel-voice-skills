@@ -98,12 +98,12 @@ export function RunHistorySwitcher({ slug, runs, activeRunId }: Props) {
                   <div className="text-sm text-[#1A1A1A]">
                     {relativeTime(r.started_at)}
                     {isLatest ? (
-                      <span className="ml-2 text-[10px] uppercase tracking-widest text-[#6B6B6B]">
+                      <span className="ml-2 text-[11px] uppercase tracking-widest text-[#6B6B6B]">
                         latest
                       </span>
                     ) : null}
                     {isActive && !isLatest ? (
-                      <span className="ml-2 text-[10px] uppercase tracking-widest text-[#6B6B6B]">
+                      <span className="ml-2 text-[11px] uppercase tracking-widest text-[#6B6B6B]">
                         viewing
                       </span>
                     ) : null}

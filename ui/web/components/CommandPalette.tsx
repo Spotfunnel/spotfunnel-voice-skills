@@ -114,7 +114,17 @@ export function CommandPalette() {
   const [selected, setSelected] = useState(0);
   const [customers, setCustomers] = useState<CustomerRow[]>([]);
   const [annotations, setAnnotations] = useState<AnnotationRow[]>([]);
+  // M24: ad-hoc copy toast. Holds the just-copied text so the toast can echo
+  // it back ("Copied · /base-agent refine slug"). Auto-clears after 2s.
+  const [toast, setToast] = useState<string | null>(null);
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    };
+  }, []);
 
   // Parse current route to extract context: customer slug + (optional)
   // run id + (optional) artifact slug. Path patterns we recognise:
@@ -322,12 +332,21 @@ export function CommandPalette() {
         return;
       }
       if (r.action.type === "copy") {
+        const text = r.action.text;
         try {
-          await navigator.clipboard.writeText(r.action.text);
+          await navigator.clipboard.writeText(text);
         } catch {
           // ignore clipboard errors silently — palette closes either way
         }
         setOpen(false);
+        // M24: brief toast feedback. Cancel any pending dismiss timer so
+        // back-to-back copies stay visible the full 2s each.
+        if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+        setToast(text);
+        toastTimerRef.current = setTimeout(() => {
+          setToast(null);
+          toastTimerRef.current = null;
+        }, 2000);
         return;
       }
       if (r.action.type === "scroll-to-annotation") {
@@ -368,9 +387,17 @@ export function CommandPalette() {
     }
   }
 
-  if (!open) return null;
+  // Toast renders independently of the modal so it survives close. When the
+  // palette is closed and there's no toast, render nothing.
+  if (!open && !toast) return null;
+
+  if (!open) {
+    return <CopyToast text={toast as string} />;
+  }
 
   return (
+    <>
+    {toast ? <CopyToast text={toast} /> : null}
     <div
       className="fixed inset-0 z-50 flex items-start justify-center pt-[12vh] bg-black/30"
       onMouseDown={(e) => {
@@ -393,7 +420,7 @@ export function CommandPalette() {
               setQuery(e.target.value);
               setSelected(0);
             }}
-            className="w-full bg-transparent text-[15px] text-[#1A1A1A] placeholder-[#9B9B95] focus:outline-none"
+            className="w-full bg-transparent text-[15px] text-[#1A1A1A] placeholder-[#7A7A72] focus:outline-none"
             data-testid="command-palette-input"
           />
         </div>
@@ -403,7 +430,7 @@ export function CommandPalette() {
           data-testid="command-palette-list"
         >
           {results.length === 0 ? (
-            <li className="px-4 py-6 text-sm text-[#9B9B95]">No results</li>
+            <li className="px-4 py-6 text-sm text-[#7A7A72]">No results</li>
           ) : (
             results.map((r, i) => {
               const active = i === selected;
@@ -422,7 +449,7 @@ export function CommandPalette() {
                   data-kind={r.kind}
                   data-active={active ? "true" : undefined}
                 >
-                  <span className="text-[10px] uppercase tracking-widest text-[#9B9B95] w-[72px] shrink-0">
+                  <span className="text-[11px] uppercase tracking-widest text-[#7A7A72] w-[72px] shrink-0">
                     {r.kind}
                   </span>
                   <span className="flex-1 text-sm text-[#1A1A1A] truncate">
@@ -437,12 +464,30 @@ export function CommandPalette() {
           )}
         </ul>
 
-        <div className="px-4 py-2 border-t border-[#E5E5E0] flex items-center gap-4 text-[10px] text-[#9B9B95]">
+        <div className="px-4 py-2 border-t border-[#E5E5E0] flex items-center gap-4 text-[11px] text-[#7A7A72]">
           <span>↑↓ navigate</span>
           <span>↵ select</span>
           <span>Esc close</span>
         </div>
       </div>
+    </div>
+    </>
+  );
+}
+
+// M24: tiny copy-feedback toast. Co-located with CommandPalette since that's
+// the only call site. No library dep — just a fixed-position div mounted via
+// React state. Auto-dismiss is handled by the parent's setTimeout.
+function CopyToast({ text }: { text: string }) {
+  return (
+    <div
+      className="fixed bottom-6 right-6 z-[60] bg-[#1A1A1A] text-white text-xs px-3.5 py-2 rounded-md shadow-lg max-w-[420px]"
+      role="status"
+      aria-live="polite"
+      data-testid="copy-toast"
+    >
+      Copied <span className="mx-1.5 text-[#9B9B95]">·</span>
+      <span className="font-mono text-[#E5E5E0]">{text}</span>
     </div>
   );
 }

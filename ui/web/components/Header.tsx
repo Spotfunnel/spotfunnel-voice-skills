@@ -12,7 +12,7 @@ export async function Header() {
   if (!user?.email) return null;
 
   return (
-    <div className="fixed top-0 right-0 z-30 px-4 py-2 text-[11px] text-[#9B9B95]">
+    <div className="fixed top-0 right-0 z-30 px-4 py-2 text-[11px] text-[#7A7A72]">
       <span data-testid="header-email">{user.email}</span>
       <span className="mx-1.5 text-[#C0C0BA]">·</span>
       <Link

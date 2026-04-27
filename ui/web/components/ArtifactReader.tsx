@@ -19,10 +19,18 @@ type Props = {
   annotations: Annotation[];
 };
 
+// M24: chip can also be "stale" — operator drag-selected, then clicked
+// elsewhere (collapsing the live selection). We keep the chip visible for
+// 3s with a subtle visual cue so an accidental click-away isn't a silent
+// data loss. Clicking the stale chip restores the prior anchor and opens
+// the composer.
 type PopoverState =
   | { kind: "chip"; anchor: AnnotationAnchor; rect: DOMRect }
+  | { kind: "stale-chip"; anchor: AnnotationAnchor; rect: DOMRect }
   | { kind: "composer"; anchor: AnnotationAnchor; rect: DOMRect }
   | null;
+
+const STALE_CHIP_MS = 3000;
 
 // Highlight color: warm yellow at 60% opacity so prose underneath stays
 // readable. Matches the M6 spec (#FFF1A8 @ 60%).
@@ -180,6 +188,16 @@ export function ArtifactReader({
     null,
   );
 
+  // M24: timer ref for the stale-chip grace window. Cleared when a fresh
+  // selection arrives, the operator clicks the stale chip, or the chip's
+  // grace expires.
+  const staleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    return () => {
+      if (staleTimerRef.current) clearTimeout(staleTimerRef.current);
+    };
+  }, []);
+
   // Annotations to render as <mark> in the prose: open/orphan always, plus
   // resolved (dimmed). Deleted are skipped inside applyHighlights.
   const renderableAnnotations = useMemo(
@@ -228,8 +246,38 @@ export function ArtifactReader({
     requestAnimationFrame(() => {
       const anchor = captureSelection(root);
       if (!anchor) {
+        // No live selection. If a chip was on screen, transition it to a
+        // stale-but-recoverable state for 3s instead of vanishing silently.
+        // Composer stays put (operator already committed to commenting).
+        if (popover?.kind === "chip") {
+          if (staleTimerRef.current) clearTimeout(staleTimerRef.current);
+          const staleAnchor = popover.anchor;
+          const staleRect = popover.rect;
+          setPopover({
+            kind: "stale-chip",
+            anchor: staleAnchor,
+            rect: staleRect,
+          });
+          staleTimerRef.current = setTimeout(() => {
+            // After grace expires, drop the stale chip. Guard: only clear
+            // if we're still in the stale state (operator didn't already
+            // start a new selection or click).
+            setPopover((cur) =>
+              cur?.kind === "stale-chip" && cur.anchor === staleAnchor
+                ? null
+                : cur,
+            );
+            staleTimerRef.current = null;
+          }, STALE_CHIP_MS);
+          return;
+        }
         if (popover?.kind !== "composer") setPopover(null);
         return;
+      }
+      // Fresh selection — cancel any pending stale grace timer.
+      if (staleTimerRef.current) {
+        clearTimeout(staleTimerRef.current);
+        staleTimerRef.current = null;
       }
       const sel = window.getSelection();
       if (!sel || sel.rangeCount === 0) return;
@@ -237,6 +285,106 @@ export function ArtifactReader({
       setPopover({ kind: "chip", anchor, rect });
     });
   }, [popover]);
+
+  // M24: window-level mousedown listener for the stale-chip transition.
+  // The article's onMouseUp only fires when the press starts inside it; if
+  // the operator clicks anywhere else (sidebar, body, blank space) while a
+  // chip is up, we won't otherwise hear about it. Listen on mousedown so
+  // the transition fires as the live selection collapses, not after.
+  useEffect(() => {
+    if (popover?.kind !== "chip") return;
+    function onDocMouseDown(e: MouseEvent) {
+      const root = rootRef.current;
+      const target = e.target as Node | null;
+      // Click inside the article: leave it to onMouseUp logic (a fresh
+      // selection or genuine collapse-inside-article is handled there).
+      if (root && target && root.contains(target)) return;
+      // Click on the chip itself: it's the consumer button — let its onClick
+      // run instead of pre-empting it here.
+      if (
+        target instanceof Element &&
+        target.closest('[data-testid="annotation-chip"]')
+      ) {
+        return;
+      }
+      // Snapshot prior anchor + rect into a stale chip; start the 3s timer.
+      const cur = popover;
+      if (!cur || cur.kind !== "chip") return;
+      if (staleTimerRef.current) clearTimeout(staleTimerRef.current);
+      const staleAnchor = cur.anchor;
+      const staleRect = cur.rect;
+      setPopover({
+        kind: "stale-chip",
+        anchor: staleAnchor,
+        rect: staleRect,
+      });
+      staleTimerRef.current = setTimeout(() => {
+        setPopover((p) =>
+          p?.kind === "stale-chip" && p.anchor === staleAnchor ? null : p,
+        );
+        staleTimerRef.current = null;
+      }, STALE_CHIP_MS);
+    }
+    document.addEventListener("mousedown", onDocMouseDown);
+    return () => document.removeEventListener("mousedown", onDocMouseDown);
+  }, [popover]);
+
+  // Restore a stale anchor by re-creating a Range that spans char_start..char_end
+  // within rootRef.current. Used when the operator clicks the stale chip after
+  // the live selection collapsed. This walks text nodes summing lengths until
+  // it finds nodes that contain the anchor's offsets — same shape as the
+  // `applyHighlights` walker. Returns the new bounding rect for popover
+  // positioning, or null if the offsets don't resolve (e.g. content shifted).
+  const restoreSelection = useCallback(
+    (anchor: AnnotationAnchor): DOMRect | null => {
+      const root = rootRef.current;
+      if (!root) return null;
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+      let offset = 0;
+      let startNode: Text | null = null;
+      let startOffsetInNode = 0;
+      let endNode: Text | null = null;
+      let endOffsetInNode = 0;
+      let cur: Node | null = walker.nextNode();
+      while (cur) {
+        const t = cur as Text;
+        const len = t.data.length;
+        if (
+          startNode === null &&
+          anchor.charStart >= offset &&
+          anchor.charStart <= offset + len
+        ) {
+          startNode = t;
+          startOffsetInNode = anchor.charStart - offset;
+        }
+        if (
+          anchor.charEnd >= offset &&
+          anchor.charEnd <= offset + len
+        ) {
+          endNode = t;
+          endOffsetInNode = anchor.charEnd - offset;
+          break;
+        }
+        offset += len;
+        cur = walker.nextNode();
+      }
+      if (!startNode || !endNode) return null;
+      try {
+        const range = document.createRange();
+        range.setStart(startNode, startOffsetInNode);
+        range.setEnd(endNode, endOffsetInNode);
+        const sel = window.getSelection();
+        if (sel) {
+          sel.removeAllRanges();
+          sel.addRange(range);
+        }
+        return range.getBoundingClientRect();
+      } catch {
+        return null;
+      }
+    },
+    [],
+  );
 
   // Document-level keyboard handlers:
   // - Esc: clear composer/chip first; if none, close the rail.
@@ -338,6 +486,8 @@ export function ArtifactReader({
   // If the mutated annotation was the focused one and its new status moves
   // it out of the current rail filter, clear focus to avoid a phantom focus
   // ring on a re-rendered row that the user can't see.
+  // M24: throw on failure so the rail can render an inline retry affordance
+  // per-row. The rail catches and tracks per-id error state.
   const handleUpdate = useCallback(
     async (id: string, patch: Partial<Annotation>) => {
       const { error: updErr } = await browserSupabase
@@ -345,11 +495,7 @@ export function ArtifactReader({
         .update(patch)
         .eq("id", id);
       if (updErr) {
-        // Surface to console — rail itself doesn't have an error slot yet.
-        // M14 follow-up: per-row error state with retry.
-        // eslint-disable-next-line no-console
-        console.error("annotation update failed", updErr);
-        return;
+        throw new Error(updErr.message);
       }
       if (
         id === focusedAnnotationId &&
@@ -370,9 +516,7 @@ export function ArtifactReader({
         .update({ status: "deleted" })
         .eq("id", id);
       if (delErr) {
-        // eslint-disable-next-line no-console
-        console.error("annotation delete failed", delErr);
-        return;
+        throw new Error(delErr.message);
       }
       if (id === focusedAnnotationId && railFilter !== "deleted") {
         setFocusedAnnotationId(null);
@@ -428,6 +572,38 @@ export function ArtifactReader({
         </button>
       ) : null}
 
+      {/* M24: stale chip — operator drag-selected then clicked away. We keep
+          the chip on screen for ~3s with a subtle visual cue (dimmed +
+          extended label) so the prior selection isn't silently lost. Click
+          to restore the prior selection and open the composer. */}
+      {popover?.kind === "stale-chip" ? (
+        <button
+          type="button"
+          onMouseDown={(e) => {
+            e.preventDefault();
+          }}
+          onClick={() => {
+            // Cancel the grace timer first — we're about to consume the chip.
+            if (staleTimerRef.current) {
+              clearTimeout(staleTimerRef.current);
+              staleTimerRef.current = null;
+            }
+            const restoredRect = restoreSelection(popover.anchor);
+            setPopover({
+              kind: "composer",
+              anchor: popover.anchor,
+              rect: restoredRect ?? popover.rect,
+            });
+          }}
+          className="absolute z-50 -translate-x-1/2 -translate-y-full bg-[#1A1A1A]/60 text-white text-xs px-3 py-1.5 rounded-full shadow-md hover:bg-[#1A1A1A]/80 transition-colors"
+          style={popoverPos(popover.rect)}
+          data-testid="annotation-chip-stale"
+          title="click here to comment on the previous selection"
+        >
+          Comment on previous selection
+        </button>
+      ) : null}
+
       {popover?.kind === "composer" ? (
         <div
           className="absolute z-50 -translate-x-1/2 -translate-y-full bg-white border border-[#E5E5E0] rounded-md shadow-lg p-4 w-80"
@@ -472,7 +648,7 @@ export function ArtifactReader({
               {saving ? "Saving…" : "Save"}
             </button>
           </div>
-          <div className="mt-2 text-[10px] text-[#9B9B95]">
+          <div className="mt-2 text-[11px] text-[#7A7A72]">
             Ctrl+Enter to save · Esc to cancel
           </div>
         </div>

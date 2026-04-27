@@ -1,5 +1,6 @@
 import { getServerSupabase } from "@/lib/supabase-server";
 import { CustomerCard } from "@/components/CustomerCard";
+import { CommandPaletteHint } from "@/components/CommandPaletteHint";
 import type { Customer } from "@/lib/types";
 
 export default async function Home() {
@@ -18,6 +19,7 @@ export default async function Home() {
   if (customers.length === 0) {
     return (
       <main className="min-h-screen p-12 bg-[#FAFAF7] text-[#1A1A1A]">
+        <CommandPaletteHint />
         <h1 className="text-3xl font-medium">ZeroOnboarding</h1>
         <p className="mt-8 text-[#6B6B6B]">
           Run /base-agent in Claude Code to onboard your first customer.
@@ -28,6 +30,7 @@ export default async function Home() {
 
   return (
     <main className="min-h-screen p-12 bg-[#FAFAF7] text-[#1A1A1A]">
+      <CommandPaletteHint />
       <h1 className="text-3xl font-medium">ZeroOnboarding</h1>
       <div className="mt-8 border-t border-[#E5E5E0]">
         {customers.map((c) => (

@@ -28,6 +28,13 @@ function bucketOf(a: Annotation): RailFilter {
   return "open";
 }
 
+// Per-row error state. `retry` is the bound mutation that re-fires when the
+// operator clicks the retry link. `clear` is set to a timer ref so we can
+// auto-dismiss the error 5s after a successful follow-up attempt.
+type RailError = {
+  retry: () => Promise<void>;
+};
+
 export function AnnotationRail({
   annotations,
   filter,
@@ -43,6 +50,66 @@ export function AnnotationRail({
   const [busyId, setBusyId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState("");
+  // M24: per-row mutation errors. Maps annotation id → bound retry. The
+  // retry re-fires the same mutation that just failed; the row stays present
+  // even if its status would normally move it out of the current filter.
+  const [errors, setErrors] = useState<Record<string, RailError>>({});
+  const dismissTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(
+    new Map(),
+  );
+
+  // Cleanup any pending dismiss timers on unmount.
+  useEffect(() => {
+    const timers = dismissTimers.current;
+    return () => {
+      for (const t of timers.values()) clearTimeout(t);
+      timers.clear();
+    };
+  }, []);
+
+  // Run a mutation with error capture. On failure, record a retry binding so
+  // the row can re-fire it; returns false. On success after a prior failure,
+  // schedule a 5s auto-dismiss of the error banner so the operator gets a
+  // brief "ok now" signal without it sitting forever; returns true. Caller
+  // uses the return value rather than re-reading `errors` (closure-stale).
+  async function withErrorCapture(
+    id: string,
+    run: () => Promise<void>,
+  ): Promise<boolean> {
+    setBusyId(id);
+    try {
+      await run();
+      // Read latest errors via functional setState so we don't depend on
+      // the closure value at call-time.
+      setErrors((prev) => {
+        if (!(id in prev)) return prev;
+        const existing = dismissTimers.current.get(id);
+        if (existing) clearTimeout(existing);
+        const timer = setTimeout(() => {
+          setErrors((p) => {
+            if (!(id in p)) return p;
+            const copy = { ...p };
+            delete copy[id];
+            return copy;
+          });
+          dismissTimers.current.delete(id);
+        }, 5000);
+        dismissTimers.current.set(id, timer);
+        return prev;
+      });
+      return true;
+    } catch {
+      setErrors((prev) => ({ ...prev, [id]: { retry: run } }));
+      const existing = dismissTimers.current.get(id);
+      if (existing) {
+        clearTimeout(existing);
+        dismissTimers.current.delete(id);
+      }
+      return false;
+    } finally {
+      setBusyId(null);
+    }
+  }
 
   // Auto-enter edit mode requested via highlightId? Not in M7 — clicking the
   // mark just focuses the row. Edit is an explicit action.
@@ -98,49 +165,35 @@ export function AnnotationRail({
       cancelEdit();
       return;
     }
-    setBusyId(a.id);
-    try {
+    const run = async () => {
       await onUpdate(a.id, { comment: trimmed });
-      cancelEdit();
-    } finally {
-      setBusyId(null);
-    }
+    };
+    const ok = await withErrorCapture(a.id, run);
+    // Only leave edit mode on success — otherwise the operator would lose
+    // their draft if they hit retry.
+    if (ok) cancelEdit();
   }
 
   async function resolve(a: Annotation) {
-    setBusyId(a.id);
-    try {
-      await onUpdate(a.id, { status: "resolved" });
-    } finally {
-      setBusyId(null);
-    }
+    await withErrorCapture(a.id, () => onUpdate(a.id, { status: "resolved" }));
   }
 
   async function reopen(a: Annotation) {
-    setBusyId(a.id);
-    try {
-      await onUpdate(a.id, { status: "open" });
-    } finally {
-      setBusyId(null);
-    }
+    await withErrorCapture(a.id, () => onUpdate(a.id, { status: "open" }));
   }
 
   async function softDelete(a: Annotation) {
-    setBusyId(a.id);
-    try {
-      await onDelete(a.id);
-    } finally {
-      setBusyId(null);
-    }
+    await withErrorCapture(a.id, () => onDelete(a.id));
   }
 
   async function restore(a: Annotation) {
-    setBusyId(a.id);
-    try {
-      await onUpdate(a.id, { status: "open" });
-    } finally {
-      setBusyId(null);
-    }
+    await withErrorCapture(a.id, () => onUpdate(a.id, { status: "open" }));
+  }
+
+  async function retryError(id: string) {
+    const err = errors[id];
+    if (!err) return;
+    await withErrorCapture(id, err.retry);
   }
 
   return (
@@ -170,7 +223,7 @@ export function AnnotationRail({
       {/* Body — scrollable list */}
       <ul className="flex-1 overflow-y-auto" data-testid="annotation-rail-list">
         {filtered.length === 0 ? (
-          <li className="px-5 py-6 text-sm text-[#9B9B95]">
+          <li className="px-5 py-6 text-sm text-[#7A7A72]">
             No {filter} annotations.
           </li>
         ) : (
@@ -226,9 +279,33 @@ export function AnnotationRail({
 
                 {/* Author + time. M22: prefer author_email's local-part;
                     fall back to author_name for pre-M22 localStorage-era rows. */}
-                <div className="mt-2 text-xs text-[#9B9B95]">
+                <div className="mt-2 text-xs text-[#7A7A72]">
                   {displayAuthor(a)} · {relativeTime(a.created_at)}
                 </div>
+
+                {/* M24: per-row mutation error. Renders below the row's
+                    content; remains until either the row leaves view or the
+                    next mutation succeeds (in which case it auto-dismisses
+                    after 5s). Click "retry" to re-fire the failed mutation. */}
+                {errors[a.id] ? (
+                  <div
+                    className="mt-2 text-xs text-[#C0392B]"
+                    onClick={(e) => e.stopPropagation()}
+                    data-testid="annotation-rail-error"
+                    data-annotation-id={a.id}
+                  >
+                    Save failed —{" "}
+                    <button
+                      type="button"
+                      onClick={() => void retryError(a.id)}
+                      disabled={isBusy}
+                      className="underline underline-offset-2 hover:text-[#8E2618] disabled:opacity-50"
+                      data-testid="annotation-rail-retry"
+                    >
+                      retry
+                    </button>
+                  </div>
+                ) : null}
 
                 {/* Actions row — only when this row's bucket matches filter,
                     so e.g. you can only "resolve" something that's currently

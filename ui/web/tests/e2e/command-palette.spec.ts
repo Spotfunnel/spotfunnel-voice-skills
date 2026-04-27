@@ -56,6 +56,31 @@ test.describe("M19 command palette", () => {
     expect(clip).toBe("/base-agent verify test-roster");
   });
 
+  test("M24: copy action shows a brief feedback toast", async ({ page, context }) => {
+    await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+    await page.goto("/c/test-roster");
+    await page.locator("body").focus();
+    await page.keyboard.press("Control+k");
+    await expect(page.getByTestId("command-palette")).toBeVisible();
+
+    const input = page.getByTestId("command-palette-input");
+    await input.fill("refine");
+
+    const action = page
+      .getByTestId("command-palette-item")
+      .filter({ hasText: "Copy /base-agent refine test-roster" });
+    await expect(action.first()).toBeVisible();
+    await action.first().click();
+
+    // Palette closes; toast remains visible briefly with the copied text.
+    await expect(page.getByTestId("command-palette")).toHaveCount(0);
+    const toast = page.getByTestId("copy-toast");
+    await expect(toast).toBeVisible();
+    await expect(toast).toContainText("/base-agent refine test-roster");
+    // Auto-dismiss within ~2s.
+    await expect(toast).toHaveCount(0, { timeout: 4000 });
+  });
+
   test("annotation results in reading mode", async ({ page }) => {
     await page.goto("/c/test-roster/brain-doc");
     await expect(page.getByTestId("artifact-body")).toBeVisible();
