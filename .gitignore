@@ -6,6 +6,7 @@
 # Next.js build output
 .next/
 next-env.d.ts
+tsconfig.tsbuildinfo
 
 # Per-customer runs (large, ephemeral, contains scraped customer data)
 **/runs/

@@ -1,91 +1,101 @@
 # spotfunnel-voice-skills
 
-Three Claude Code skills that automate end-to-end voice-AI customer onboarding and validation:
+Voice-AI customer onboarding skills for Claude Code, plus a small operator UI
+that closes the read-and-fix protocol-improvement loop.
 
-- **`/base-agent`** — scrape a new customer's website, synthesize a knowledge-base brain doc from the site + your meeting transcript, create a rough Ultravox agent (no tools yet) with your reference agent's voice/temperature/inactivity settings, claim a Telnyx DID from your pool and wire TeXML, then generate a bespoke ChatGPT-ready discovery prompt the customer pastes into ChatGPT to write a detailed brief back to you.
-- **`/onboard-customer`** — wire a finished Ultravox agent into your dashboard backend (Supabase workspaces + auth users + n8n error reporting + dashboard webhook).
-- **`/stress-test`** — run simulated calls against a finished agent, grade the transcripts against a constitution of rules, and produce actionable per-violation reports. The post-tool-design quality gate before an agent goes live.
+## What this is
 
-Together they collapse a multi-hour manual onboarding process into roughly 30 minutes of operator attention per customer, plus an automated stress-test pass before go-live.
+A `/base-agent` Claude Code skill that onboards a voice-AI customer end-to-end
+in 11 stages: scrape the customer's website, synthesize a knowledge-base brain
+doc from site + meeting transcript + operator hints, create a rough Ultravox
+agent with voice/temperature/inactivity copied from a reference agent, claim a
+Telnyx DID from your pool and wire TeXML, generate a bespoke ChatGPT-ready
+discovery prompt, then hand off to `/onboard-customer` for dashboard wiring.
+Resumable across crashes via per-run state.
 
-## Prerequisites
+A small Next.js operator UI deployed at <https://zero-onboarding.vercel.app>
+shows runs in shared Supabase, lets you annotate any artifact (drag-select +
+comment), and feeds the feedback back through the skill: `refine` replays
+open annotations as patches against a new run; `review-feedback` clusters
+cross-customer feedback into reusable lessons and promotes mature ones into
+the generator prompts. So a fix made once benefits every future onboarding.
 
-- **Claude Code** installed locally
-- A **Claude Max subscription** (or compatible plan) — the skills use Claude Opus 4.7 inline as their LLM brain
-- **Git Bash** on Windows or any POSIX shell on macOS/Linux
-- **Python 3** on `PATH`
+## What's in the box
 
-**Vendor accounts (Ultravox, Telnyx, Firecrawl, Resend, Supabase, n8n) are only required if you're standing up your own backend from scratch.** If a collaborator is onboarding you into their existing Spotfunnel-style operation, you piggyback on their accounts via the `.env` they send you — no signup needed on your side.
+| Component | Where | What it does |
+|---|---|---|
+| `/base-agent` skill | `base-agent-setup/` | 11-stage onboarding orchestrator |
+| `/onboard-customer` skill | `onboard-customer/` | Dashboard wiring after `/base-agent` |
+| `/stress-test` skill | `voice-stress-test/` | Voice agent stress testing |
+| Operator UI | `ui/web/` | Next.js app, deployed at `zero-onboarding.vercel.app` |
+| Verify module | `base-agent-setup/server/verify.py` | 10 deterministic post-onboarding checks |
+| Operator-UI server lib | `ui/server/` | Python helpers + 76 integration tests against the `operator_ui` schema |
 
-## Quick install
+## Quick start
 
-There are two install paths. Pick yours:
+Install: see [INSTALL.md](INSTALL.md). Path A (shared backend) takes <10 min
+once you have keys.
 
-**Path A — joining an existing Spotfunnel-style operation.** A collaborator is sharing their business backend (Telnyx, Ultravox, Supabase, n8n, Resend, Firecrawl) with you. They'll send you a complete `.env` privately. Paste it in at the repo root, junction the three skills into `~/.claude/skills/`, open a fresh Claude Code session, and you're ready. ~5 minutes. See **[INSTALL.md §3](INSTALL.md#3-quick-install-shared-backend--path-a)** for details.
+Once installed, in Claude Code from any directory:
 
-**Path B — forking to build your own copy from scratch.** You're provisioning your own Telnyx, Ultravox, Supabase, etc. See **[INSTALL.md §4](INSTALL.md#4-provision-your-own-backend--path-b)** for the detailed walkthrough — every account, every key, every verification curl. ~60–90 minutes.
+```
+/base-agent
+```
 
-Common skeleton for both paths:
+Browse runs in the operator UI: <https://zero-onboarding.vercel.app>.
+
+## Sub-commands
+
+- `/base-agent [customer-name]` — run or resume the 11-stage onboarding.
+- `/base-agent refine [customer-slug]` — replay open annotations as per-run patches against a new run.
+- `/base-agent review-feedback` — cluster cross-customer feedback into lessons; promote mature lessons into prompt files.
+- `/base-agent verify [customer-slug]` — run 10 deterministic post-onboarding checks. Stage 11.5 runs it advisory after every onboarding.
+
+See [`base-agent-setup/SKILL.md`](base-agent-setup/SKILL.md) for the full
+stage-by-stage spec.
+
+## Architecture
+
+- **Operator UI** — Next.js (App Router) on Vercel. Reads server-side via
+  service-role; writes annotations + feedback browser-side via anon (RLS
+  scoped). Hosted at `zero-onboarding.vercel.app`, password-protected.
+- **Skill** — local Bash + Python under Claude Code. Scripts live in
+  `base-agent-setup/scripts/`.
+- **State backend** — `operator_ui` schema in Supabase Postgres. When
+  `USE_SUPABASE_BACKEND=1`, the skill writes runs/artifacts/state to Supabase
+  via REST. When `0` (legacy), state lives in `runs/{slug}-{ts}/state.json`
+  on disk. Annotations + feedback + lessons + verifications are always
+  Supabase-resident.
+
+See [`docs/plans/2026-04-26-operator-ui-design.md`](docs/plans/2026-04-26-operator-ui-design.md)
+for the full design rationale and
+[`docs/plans/2026-04-26-operator-ui-implementation.md`](docs/plans/2026-04-26-operator-ui-implementation.md)
+for the milestone-by-milestone build plan.
+
+## Tests
 
 ```bash
-git clone https://github.com/Spotfunnel/spotfunnel-voice-skills.git
-cd spotfunnel-voice-skills
-cp .env.example .env
-# Path A: paste in the values your collaborator sent you privately.
-# Path B: see INSTALL.md §4 to provision each vendor account and capture keys.
+# Python — 76 integration tests against live Supabase + httpx mocks.
+cd ui/server
+pytest -v
+
+# Playwright — e2e against the local Next.js dev server.
+cd ui/web
+npx playwright test --reporter=list
+
+# Skill bash unit tests (state, refine, review-feedback, regenerate).
+cd base-agent-setup/scripts/tests
+bash test_state_sh.sh
 ```
 
-Then make the three skills discoverable by Claude Code. On Windows (Git Bash) using directory junctions:
+`pytest` requires `SUPABASE_OPERATOR_URL` and `SUPABASE_OPERATOR_SERVICE_ROLE_KEY`
+in your env — integration tests skip without them.
 
-```bash
-cmd <<EOF
-mklink /J "C:\Users\YOU\.claude\skills\base-agent-setup" "C:\path\to\spotfunnel-voice-skills\base-agent-setup"
-mklink /J "C:\Users\YOU\.claude\skills\onboard-customer" "C:\path\to\spotfunnel-voice-skills\onboard-customer"
-mklink /J "C:\Users\YOU\.claude\skills\voice-stress-test" "C:\path\to\spotfunnel-voice-skills\voice-stress-test"
-EOF
-```
+## Hard rules
 
-On macOS / Linux:
-
-```bash
-ln -s "$(pwd)/base-agent-setup" ~/.claude/skills/base-agent-setup
-ln -s "$(pwd)/onboard-customer" ~/.claude/skills/onboard-customer
-ln -s "$(pwd)/voice-stress-test" ~/.claude/skills/voice-stress-test
-```
-
-Open a fresh Claude Code session anywhere and run `/base-agent` to start.
-
-See **[INSTALL.md](INSTALL.md)** for the full step-by-step — including the shared-backend path, the from-scratch path, env preflight, the dry-run procedure, and troubleshooting.
-
-## Layout
-
-```
-spotfunnel-voice-skills/
-├── README.md                  ← you are here
-├── INSTALL.md                 ← detailed first-time setup
-├── .env.example               ← template for your secrets
-├── .gitignore                 ← ignores .env, runs/, customer data
-├── base-agent-setup/          ← skill 1 (the 30-min onboarding workhorse)
-│   ├── SKILL.md
-│   ├── reference-docs/discovery-methodology.md   ← steers the discovery prompt
-│   ├── prompts/                                  ← Claude-facing prompt templates
-│   ├── templates/                                ← static templates (universal rules, cover email, example agents + tool defs)
-│   ├── scripts/                                  ← bash helpers for Firecrawl / Ultravox / Telnyx / Resend
-│   └── docs/                                     ← design + implementation plan
-├── onboard-customer/          ← skill 2 (dashboard wiring)
-│   ├── SKILL.md
-│   ├── ENV_SETUP.md
-│   ├── examples/                                 ← intent/outcome taxonomy templates per vertical
-│   └── prompts/                                  ← Claude-facing taxonomy generation prompt
-├── voice-stress-test/         ← skill 3 (post-tool-design validation gate)
-│   └── SKILL.md                                  ← constitution + scenarios + grader orchestration
-├── docs/runbooks/             ← operational runbooks (n8n error wiring, etc.)
-└── schema/                    ← SQL migrations for the dashboard backend
-```
-
-## Contributing / forks
-
-Fork freely. The methodology in `base-agent-setup/reference-docs/discovery-methodology.md` is the highest-leverage thing to customize for your own onboarding style — it controls how the customer's ChatGPT discovery conversation behaves. Push back genuinely useful changes via PR if you'd like.
+See [CLAUDE.md](CLAUDE.md). Short version: safe full-PATCH for Ultravox
+updates (never partial); never auto-buy DIDs; vendor-name hygiene in
+customer-facing artifacts; examples-not-scripts in PROCEDURES.
 
 ## License
 
