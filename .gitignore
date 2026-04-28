@@ -34,3 +34,5 @@ __pycache__/
 
 # (No exclusion for templates/example-agents — reference prompts are tracked
 # so collaborators inherit the same depth-and-structure inspiration.)
+.env.bak-*
+.env.bak*

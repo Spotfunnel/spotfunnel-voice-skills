@@ -426,6 +426,68 @@ If `state_get ultravox_agent_id` returns a non-empty UUID, the agent was already
 
 ---
 
+## Stage 6.5 — Attach base tools
+
+**Goal:** every new agent gets the two shared base tools (warmTransfer + takeMessage) attached with per-customer config (transfer destination + message recipient). Mandatory. The agent shouldn't ship without somewhere to escalate or somewhere to send messages.
+
+This stage is exclusive to NEW base-tools customers. Existing customers (Teleca, TelcoWorks) keep their per-customer Railway services — see [Operator handoff: dashboard-server contract](#operator-handoff-dashboard-server-contract) below.
+
+### Prerequisites (one-time operator setup)
+
+Before any new customer goes through Stage 6.5, the operator must have created the two shared tools in their Ultravox account and pasted their IDs into `.env`:
+
+- `ULTRAVOX_BASE_TOOL_TRANSFER_ID` — the shared `baseWarmTransfer` tool (wraps Ultravox's PSTN transferToCallParticipant; takes a `destination_phone` parameter)
+- `ULTRAVOX_BASE_TOOL_TAKE_MESSAGE_ID` — the shared `baseTakeMessage` tool (HTTP tool POSTing to `$DASHBOARD_SERVER_URL/webhooks/take-message`; takes `recipient_channel` + `recipient_address` parameters)
+
+If either env var is empty when this stage runs, the script halts with an "operator setup gap" message. Fix by creating the tools in Ultravox console and updating `.env`.
+
+### What to do
+
+```bash
+SLUG="$(bash scripts/state.sh state_get slug)"
+RUN_ID="${STATE_RUN_ID:-$(basename "$STATE_RUN_DIR")}"
+AGENT_ID="$(bash scripts/state.sh state_get ultravox_agent_id)"
+
+bash scripts/attach-base-tools.sh \
+  --slug "$SLUG" \
+  --run-id "$RUN_ID" \
+  --agent-id "$AGENT_ID"
+```
+
+The script prompts the operator interactively for:
+- **Transfer phone** (E.164 AU, e.g. `+61412345678`) — where the agent routes callers when they ask for a human.
+- **Recipient email** — where the agent's take-message tool sends captured messages.
+
+It then:
+1. Validates inputs (E.164 AU regex + RFC-5321ish email).
+2. Upserts two rows into `operator_ui.agent_tools` with `customer_id`, `tool_name`, `config`, `ultravox_tool_id`, and `attached_to_agent_id`.
+3. Safe full-PATCHes the live Ultravox agent's `selectedTools` to add both tools with `parameterOverrides` (destination + recipient channel/address).
+4. Verifies post-PATCH drift: every non-`selectedTools` field must match pre-snapshot. Halts with exit code 2 on drift.
+5. Writes two `deployment_log` entries so `/base-agent remove` can replay inverses.
+
+### Halt conditions
+
+- Either `ULTRAVOX_BASE_TOOL_*_ID` env var is empty → halt with the operator-setup-gap message.
+- Phone fails E.164 AU regex `^\+61[2-478]\d{8}$` → halt; re-prompt.
+- Email fails standard validation → halt; re-prompt.
+- Ultravox PATCH non-2xx → HALT (exit 2). Re-run after diagnosing.
+- Drift detected post-PATCH → HALT (exit 2). Refuse to proceed; investigate which field changed unexpectedly.
+- `operator_ui.agent_tools` upsert fails → halt; agent_tools rows that did land are caught by drift detection at remove time.
+
+### Resume note
+
+This stage is idempotent. Re-running with the same agent + same destinations is a no-op (upsert merges, PATCH idempotently sets `selectedTools`). Re-running with DIFFERENT destinations updates both the DB and the live agent — but does NOT log a new `deployment_log` entry (the inverse is the same DELETE either way). To force a clean re-attach: manually delete the `operator_ui.agent_tools` rows first.
+
+### Mark stage complete
+
+```bash
+state_stage_complete 7 '{"base_tools_attached": true}'   # uses 7 because Stage 7 is the next discrete numbered stage; Stage 6.5 doesn't have its own stage_complete slot
+```
+
+(Stage 6.5 piggybacks on Stage 7's `stage_complete=7` increment for resume purposes — it always runs immediately before Stage 7. If it fails partway, the run resumes by re-running Stage 6.5 then Stage 7.)
+
+---
+
 ## Stage 7 — Claim Telnyx DID from pool
 
 **Goal:** pick an unassigned DID from the operator's Telnyx pool, preferring the customer's local area code if inferrable from the brain-doc.
@@ -1340,6 +1402,47 @@ Verify is read-only (except for the persistence write to `operator_ui.verificati
 | `/base-agent review-feedback` | Cluster cross-customer feedback into lessons (phase 1), then bake mature lessons into generator prompt files (phase 2). See "Sub-command: /base-agent review-feedback" above. |
 | `/base-agent verify [slug]` | Runs the 10 deterministic checks (11 with `--include-call`) against the most recent run for the slug. Same checks Stage 11.5 runs advisory after every onboarding. See "Sub-command: /base-agent verify" above. |
 | `/base-agent remove [slug]` | Tear down every trace of a customer across operator_ui + dashboard + Telnyx + Ultravox + local FS. See "Sub-command: /base-agent remove" below. |
+| `/base-agent attach-tools [slug]` | (sub-step of Stage 6.5) Re-prompt for transfer destination + message recipient, upsert `agent_tools` rows, PATCH live Ultravox agent. Use to change destinations after onboarding. |
+
+---
+
+## Operator handoff — dashboard-server contract
+
+The Stage 6.5 `baseTakeMessage` tool POSTs to a webhook on the operator's `dashboard-server`. That endpoint must exist before any new customer's take-message tool will work end-to-end. It lives in a separate repo (the dashboard-server source), not in this skills repo. Add it once and every base-tools customer benefits.
+
+**Endpoint:**
+
+```
+POST $DASHBOARD_SERVER_URL/webhooks/take-message
+Headers:  X-Ultravox-Signature: <existing webhook auth pattern>
+          Content-Type: application/json
+
+Body:
+  {
+    "agent_id":         "uuid",         # which Ultravox agent invoked the tool
+    "caller_phone":     "+61...",       # auto-injected by Ultravox via parameterOverrides
+    "caller_name":      "string",       # collected by the agent
+    "callback_number":  "+61...",       # collected by the agent
+    "reason":           "string",       # caller's reason for calling
+    "urgency":          "string"        # optional — collected only when relevant
+  }
+
+Response: { "success": true }
+```
+
+**Behavior on the dashboard-server side:**
+
+1. Verify `X-Ultravox-Signature` against the existing webhook-signing scheme (same as `call.ended`).
+2. Look up the workspace from `agent_id`: `SELECT * FROM public.workspaces WHERE ultravox_agent_ids @> ARRAY[$agent_id]`.
+3. Look up the recipient: `SELECT config FROM operator_ui.agent_tools WHERE customer_id = (slug → customer_id) AND tool_name = 'take_message'`. Read `config.recipient.channel` and `config.recipient.address`.
+4. Send the message via the appropriate channel:
+   - `email` → Resend (use the same Resend integration that already powers ops alerts; structured plaintext body with caller_name, callback_number, reason, urgency).
+   - `sms` (phase 2) → SMS provider TBD.
+5. Audit: `INSERT INTO public.workflow_errors (workspace_id, source, severity, message, payload) VALUES (..., 'take_message', 'info', 'Message taken', $body)`.
+
+**Until this endpoint is live**, base-tools customers' `takeMessage` tool invocations will fail at runtime — the verification check `agent-tools-attached-live` will pass (it only checks the agent's selectedTools array), but actual call-time tool invocations will 502.
+
+The `baseWarmTransfer` tool does NOT need a dashboard-server endpoint — it uses Ultravox's built-in PSTN transferToCallParticipant which dials the configured destination directly. No backend wiring required.
 
 ---
 

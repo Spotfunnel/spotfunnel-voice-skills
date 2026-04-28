@@ -31,6 +31,19 @@ type VerificationRow = {
   created_at: string;
 };
 
+// Per-customer base-tools row from operator_ui.agent_tools. Stage 6.5
+// of /base-agent writes one row per tool (transfer + take_message).
+// Existing per-customer-server installs (Teleca/TelcoWorks) have zero
+// rows — the panel hides cleanly in that case.
+type AgentToolRow = {
+  id: string;
+  tool_name: "transfer" | "take_message" | string;
+  config: unknown;
+  ultravox_tool_id: string | null;
+  attached_to_agent_id: string | null;
+  updated_at: string;
+};
+
 export default async function InspectPage({
   params,
 }: {
@@ -76,6 +89,18 @@ export default async function InspectPage({
     if (vRow) verification = vRow as VerificationRow;
   }
 
+  // Base-tools attached to this customer (Stage 6.5 output). Empty for
+  // existing per-customer-server installs (Teleca/TelcoWorks etc.).
+  const { data: toolsRows, error: toolsError } = await supabase
+    .from("agent_tools")
+    .select("id, tool_name, config, ultravox_tool_id, attached_to_agent_id, updated_at")
+    .eq("customer_id", customer.id)
+    .order("tool_name", { ascending: true });
+  if (toolsError) {
+    throw new Error(`Failed to load agent_tools: ${toolsError.message}`);
+  }
+  const tools = (toolsRows ?? []) as AgentToolRow[];
+
   return (
     <main className="min-h-screen p-12 bg-[#FAFAF7] text-[#1A1A1A]">
       <div className="max-w-3xl">
@@ -92,6 +117,8 @@ export default async function InspectPage({
 
         <h1 className="mt-4 text-3xl font-medium">Inspect deployment</h1>
         <hr className="mt-4 border-t border-[#E5E5E0]" />
+
+        {tools.length > 0 ? <ToolsPanel tools={tools} /> : null}
 
         {verification ? (
           <InspectBody verification={verification} customerSlug={customer.slug} />
@@ -182,6 +209,58 @@ function InspectBody({
       </details>
     </div>
   );
+}
+
+function ToolsPanel({ tools }: { tools: AgentToolRow[] }) {
+  return (
+    <section className="mt-8" data-testid="inspect-tools-panel">
+      <h2 className="text-[11px] uppercase tracking-[0.18em] text-[#9A9A92] font-medium">
+        Base tools
+      </h2>
+      <ul className="mt-3 grid gap-3" data-testid="inspect-tools-list">
+        {tools.map((t) => (
+          <ToolCard key={t.id} tool={t} />
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+function ToolCard({ tool }: { tool: AgentToolRow }) {
+  const summary = renderToolSummary(tool);
+  const label = tool.tool_name === "take_message" ? "Take message" : tool.tool_name === "transfer" ? "Transfer" : tool.tool_name;
+  return (
+    <li
+      className="border border-[#E5E5E0] rounded-md bg-white px-5 py-4"
+      data-testid="inspect-tool-card"
+      data-tool-name={tool.tool_name}
+    >
+      <div className="flex items-baseline justify-between gap-4">
+        <div className="font-medium text-[#1A1A1A]">{label}</div>
+        <div className="font-mono text-[11px] text-[#9A9A92]">
+          {tool.attached_to_agent_id
+            ? `agent ${tool.attached_to_agent_id.slice(0, 8)}…`
+            : "not attached"}
+        </div>
+      </div>
+      <div className="mt-1 text-sm text-[#6B6B6B] break-words">{summary}</div>
+    </li>
+  );
+}
+
+function renderToolSummary(tool: AgentToolRow): string {
+  const cfg = tool.config as Record<string, unknown> | null;
+  if (!cfg) return "(no config)";
+  if (tool.tool_name === "transfer") {
+    const dests = (cfg.destinations as Array<{ label?: string; phone?: string }> | undefined) ?? [];
+    if (dests.length === 0) return "(no destinations)";
+    return dests.map((d) => `${d.label ?? "?"} → ${d.phone ?? "?"}`).join(", ");
+  }
+  if (tool.tool_name === "take_message") {
+    const recipient = (cfg.recipient as { channel?: string; address?: string } | undefined) ?? {};
+    return `${recipient.channel ?? "?"} → ${recipient.address ?? "?"}`;
+  }
+  return JSON.stringify(cfg);
 }
 
 function CheckRowItem({ check }: { check: CheckRow }) {

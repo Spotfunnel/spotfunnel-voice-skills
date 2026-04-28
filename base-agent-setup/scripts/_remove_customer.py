@@ -170,6 +170,7 @@ class Inventory:
     op_feedback: list[dict[str, Any]] = field(default_factory=list)
     op_verifications: list[dict[str, Any]] = field(default_factory=list)
     op_lessons_touching: list[dict[str, Any]] = field(default_factory=list)
+    op_agent_tools: list[dict[str, Any]] = field(default_factory=list)
     dash_workspace: dict[str, Any] | None = None
     dash_users: list[dict[str, Any]] = field(default_factory=list)
     dash_calls_count: int = 0
@@ -214,6 +215,15 @@ def discover(slug: str) -> Inventory:
         inv.op_lessons_touching = op_get(
             f"lessons?observed_in_customer_ids=cs.{{{cid}}}"
             f"&select=id,title,observed_in_customer_ids,source_feedback_ids,promoted_to_prompt"
+        )
+        # Base-tools rows (Stage 6.5 of /base-agent). Empty for existing
+        # per-customer-server installs; a couple of rows for new customers.
+        # CASCADE on customer_id means the subsequent customers DELETE will
+        # auto-clean these — but discovery + verification still report them
+        # for transparency.
+        inv.op_agent_tools = op_get(
+            f"agent_tools?customer_id=eq.{cid}"
+            f"&select=id,tool_name,attached_to_agent_id"
         )
 
     # --- dashboard rows ----------------------------------------------------
@@ -348,6 +358,7 @@ def print_inventory(slug: str, inv: Inventory) -> None:
     print(f"  operator_ui.feedback              {fmt_count(len(inv.op_feedback))}")
     print(f"  operator_ui.verifications         {fmt_count(len(inv.op_verifications))}")
     print(f"  operator_ui.lessons (touching)    {fmt_count(len(inv.op_lessons_touching))}  (surgical scrub)")
+    print(f"  operator_ui.agent_tools           {fmt_count(len(inv.op_agent_tools))}  (CASCADE on customer delete)")
     if inv.dash_workspace:
         print(f"  dashboard.workspaces              1 row ({inv.dash_workspace['id']})")
         print(f"  dashboard.public.users            {fmt_count(len(inv.dash_users))}")
@@ -661,6 +672,8 @@ def verify(slug: str) -> tuple[bool, list[str]]:
         residue.append(f"operator_ui.feedback: {len(inv.op_feedback)} rows")
     if inv.op_verifications:
         residue.append(f"operator_ui.verifications: {len(inv.op_verifications)} rows")
+    if inv.op_agent_tools:
+        residue.append(f"operator_ui.agent_tools: {len(inv.op_agent_tools)} rows")
     if inv.dash_workspace:
         residue.append(f"dashboard.workspaces: {inv.dash_workspace['id']} still present")
     if inv.telnyx_apps:

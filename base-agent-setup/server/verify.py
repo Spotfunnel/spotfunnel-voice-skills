@@ -878,6 +878,154 @@ def _check_test_call(state: dict, tx_key: str) -> dict:
     return _result(cid, title, "pass", started, f"placed + hung up call {call_id}")
 
 
+# ---------- Checks 12-14: base tools (transfer + take_message) -----------
+
+
+def _fetch_agent_tools_rows(op_url: str, op_key: str, slug: str) -> list[dict]:
+    """Read operator_ui.agent_tools rows for this customer's slug. Empty list
+    means either this isn't a base-tools customer (Teleca/TelcoWorks-style
+    per-customer-server install) or Stage 6.5 hasn't run. The orchestrator
+    distinguishes those cases by checking state.stage_complete.
+    """
+    cust_url = (
+        f"{op_url.rstrip('/')}/rest/v1/customers"
+        f"?slug=eq.{urllib.parse.quote(slug, safe='')}&select=id"
+    )
+    status, body = _http("GET", cust_url, _op_headers(op_key))
+    if status >= 400 or not isinstance(body, list) or not body:
+        return []
+    customer_id = body[0]["id"]
+    tools_url = (
+        f"{op_url.rstrip('/')}/rest/v1/agent_tools"
+        f"?customer_id=eq.{customer_id}"
+        f"&select=tool_name,config,ultravox_tool_id,attached_to_agent_id"
+    )
+    status, body = _http("GET", tools_url, _op_headers(op_key))
+    if status >= 400 or not isinstance(body, list):
+        return []
+    return body
+
+
+def _check_agent_tools_config_present(
+    agent_tools_rows: list[dict],
+    *,
+    base_tools_customer: bool,
+) -> dict:
+    """Per-customer agent_tools rows exist for both transfer AND take_message.
+    Skips for non-base-tools customers (existing Teleca/TelcoWorks etc).
+    """
+    started = time.monotonic()
+    cid = "agent-tools-config-present"
+    title = "Base tools configured for customer"
+    if not base_tools_customer:
+        return _result(cid, title, "skip", started, "not a base-tools customer (no agent_tools rows)")
+    expected = {"transfer", "take_message"}
+    found = {r.get("tool_name") for r in agent_tools_rows}
+    missing = expected - found
+    if not missing:
+        return _result(cid, title, "pass", started, f"both rows present ({len(agent_tools_rows)} total)")
+    return _result(
+        cid, title, "fail", started,
+        f"missing agent_tools row(s): {sorted(missing)}",
+        remediation=(
+            "bash scripts/attach-base-tools.sh --slug $SLUG --run-id $RUN_ID "
+            "--agent-id $AGENT_ID --transfer-phone $PHONE --message-email $EMAIL"
+        ),
+    )
+
+
+def _check_agent_tools_attached_live(
+    agent: dict | None,
+    agent_tools_rows: list[dict],
+    *,
+    base_tools_customer: bool,
+) -> dict:
+    """Live Ultravox agent's selectedTools contains both base tool IDs."""
+    started = time.monotonic()
+    cid = "agent-tools-attached-live"
+    title = "Base tools attached to live Ultravox agent"
+    if not base_tools_customer:
+        return _result(cid, title, "skip", started, "not a base-tools customer")
+    if not agent:
+        return _result(cid, title, "skip", started, "agent unavailable (check 1 already failed)")
+    selected = _agent_field(agent, "selectedTools") or []
+    if not isinstance(selected, list):
+        selected = []
+    expected_ids = {r.get("ultravox_tool_id") for r in agent_tools_rows if r.get("ultravox_tool_id")}
+    live_ids = {t.get("toolId") for t in selected if isinstance(t, dict)}
+    missing = expected_ids - live_ids
+    if not missing:
+        return _result(cid, title, "pass", started, f"{len(expected_ids)} base tool(s) on live agent")
+    return _result(
+        cid, title, "fail", started,
+        f"missing toolId(s) on live agent: {sorted(missing)}",
+        remediation="re-run scripts/attach-base-tools.sh — config rows exist but PATCH didn't land",
+    )
+
+
+def _check_agent_tools_no_drift(
+    agent: dict | None,
+    agent_tools_rows: list[dict],
+    *,
+    base_tools_customer: bool,
+) -> dict:
+    """Compare each tool's parameterOverrides on the live agent against the
+    config persisted in operator_ui.agent_tools. Drift = an out-of-band edit
+    (operator changed the destination via Ultravox console without updating
+    our DB, or vice versa).
+    """
+    started = time.monotonic()
+    cid = "agent-tools-no-drift"
+    title = "Base tool config matches live agent"
+    if not base_tools_customer:
+        return _result(cid, title, "skip", started, "not a base-tools customer")
+    if not agent:
+        return _result(cid, title, "skip", started, "agent unavailable")
+    selected = _agent_field(agent, "selectedTools") or []
+    if not isinstance(selected, list):
+        selected = []
+
+    drift: list[str] = []
+    for row in agent_tools_rows:
+        tool_id = row.get("ultravox_tool_id")
+        cfg = row.get("config") or {}
+        live = next(
+            (t for t in selected if isinstance(t, dict) and t.get("toolId") == tool_id),
+            None,
+        )
+        if not live:
+            continue  # caught by previous check
+        live_overrides = live.get("parameterOverrides") or {}
+        if row.get("tool_name") == "transfer":
+            expected_phone = ""
+            dests = (cfg.get("destinations") or [])
+            if dests:
+                expected_phone = dests[0].get("phone", "")
+            if live_overrides.get("destination_phone") != expected_phone:
+                drift.append(
+                    f"transfer.destination_phone: db={expected_phone!r} live={live_overrides.get('destination_phone')!r}"
+                )
+        elif row.get("tool_name") == "take_message":
+            expected_channel = (cfg.get("recipient") or {}).get("channel", "")
+            expected_address = (cfg.get("recipient") or {}).get("address", "")
+            if live_overrides.get("recipient_channel") != expected_channel:
+                drift.append(
+                    f"take_message.recipient_channel: db={expected_channel!r} live={live_overrides.get('recipient_channel')!r}"
+                )
+            if live_overrides.get("recipient_address") != expected_address:
+                drift.append(
+                    f"take_message.recipient_address: db={expected_address!r} live={live_overrides.get('recipient_address')!r}"
+                )
+
+    if not drift:
+        return _result(cid, title, "pass", started, "all tools match between db and live agent")
+    return _result(
+        cid, title, "fail", started,
+        f"drift: {'; '.join(drift)}",
+        remediation="reconcile by re-running scripts/attach-base-tools.sh OR updating operator_ui.agent_tools to match the live agent",
+    )
+
+
 # ---------- Orchestrator --------------------------------------------------
 
 
@@ -943,7 +1091,15 @@ def run_verification(
     checks.append(_check_dashboard_auth_user(slug))
     # 11
     checks.append(_check_n8n_workflow_active())
-    # 12 (opt-in)
+    # 12-14 — base tools (transfer + take_message). Skips cleanly for
+    # existing customers (Teleca/TelcoWorks) that don't use the shared
+    # base-tools layer; runs full checks for new customers.
+    agent_tools_rows = _fetch_agent_tools_rows(op_url, op_key, slug)
+    base_tools_customer = bool(agent_tools_rows)
+    checks.append(_check_agent_tools_config_present(agent_tools_rows, base_tools_customer=base_tools_customer))
+    checks.append(_check_agent_tools_attached_live(agent, agent_tools_rows, base_tools_customer=base_tools_customer))
+    checks.append(_check_agent_tools_no_drift(agent, agent_tools_rows, base_tools_customer=base_tools_customer))
+    # 15 (opt-in)
     if include_call:
         checks.append(_check_test_call(state, tx_key))
 
