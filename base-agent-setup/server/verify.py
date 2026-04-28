@@ -1,14 +1,20 @@
 #!/usr/bin/env python3
 """Post-onboarding verification for /base-agent customer runs.
 
-Runs 10 deterministic checks against external systems (Ultravox, Telnyx,
-Supabase, n8n) plus an opt-in 11th programmatic test call. Results land in
+Runs 11 deterministic checks against external systems (Ultravox, Telnyx,
+Supabase, n8n) plus an opt-in 12th programmatic test call. Results land in
 operator_ui.verifications so the future Inspect view can display them.
 
 Halt-loud on unexpected internal errors (env missing, no run for slug);
 advisory on individual check failures — those land as `fail` rows, not
 exceptions. Three-bucket model: pass / fail / skip. Skips never count
 against the run.
+
+Dashboard-related checks (workspace, auth user, ultravox call.ended URL)
+fail loudly by default on missing creds / table 404 / unset DASHBOARD_SERVER_URL
+— silent skips here disguised the #1 onboarding misconfig. Operators with
+partner-routed customers that are intentionally not in the SpotFunnel dashboard
+opt out via SKIP_DASHBOARD_VERIFY=1.
 
 Runnable as both:
     python -m server.verify --slug <slug>          # cwd=base-agent-setup/
@@ -44,8 +50,21 @@ TELNYX_BASE = "https://api.telnyx.com/v2"
 
 # Operator UI schema (where we persist results). Distinct from
 # SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY, which point at the customer-facing
-# dashboard schema (used by checks 8 + 9).
+# dashboard schema (used by the dashboard checks).
 OP_SCHEMA = "operator_ui"
+
+
+def _dashboard_opt_out() -> bool:
+    """When SKIP_DASHBOARD_VERIFY=1, the dashboard-related checks (workspace,
+    auth user, ultravox call.ended URL) treat missing creds / missing tables /
+    unset DASHBOARD_SERVER_URL as `skip` rather than `fail`. Default behavior
+    is fail-loud — silent skips here used to disguise the #1 onboarding
+    misconfig (SUPABASE_URL pointed at the operator_ui project instead of the
+    dashboard project). Operators with partner-routed customers that are
+    intentionally not in the dashboard set the flag to keep the old skip
+    semantics.
+    """
+    return os.environ.get("SKIP_DASHBOARD_VERIFY", "").strip() == "1"
 
 
 # ---------- HTTP helper ---------------------------------------------------
@@ -535,7 +554,81 @@ def _check_webhook_callback(conn_id: str, tx_key: str, agent_id: str) -> dict:
     return _result(cid, title, "pass", started, f"status_callback set{note}")
 
 
+# ---------- Check 7b: Ultravox call.ended webhook URL ---------------------
+
+
+def _check_ultravox_call_ended_webhook(agent: dict | None) -> dict:
+    """Verifies the agent's call.ended webhook URL points at
+    $DASHBOARD_SERVER_URL/webhooks/call-ended.
+
+    Surface 1 of /onboard-customer says: "If unset or wrong: call NEVER reaches
+    dashboard. Silent. No row appears." Verify used to have no check for this,
+    so a misconfigured Ultravox console (operator forgot Stage 7) shipped clean
+    every time. Now it fails by default; opt out with SKIP_DASHBOARD_VERIFY=1
+    when the customer is intentionally routed elsewhere.
+
+    URL match is a substring check on the JSON-serialised eventMessages array.
+    Ultravox surfaces these as either `eventMessages` at top-level or under
+    `callTemplate.eventMessages` (handled via _agent_field). Each entry's URL
+    field name varies across SDK versions; the substring approach is robust to
+    that and to leading/trailing whitespace.
+    """
+    started = time.monotonic()
+    cid = "ultravox-call-ended-webhook-set"
+    title = "Ultravox call.ended webhook URL set"
+    if agent is None:
+        return _result(cid, title, "skip", started, "agent fetch failed earlier")
+    dash = os.environ.get("DASHBOARD_SERVER_URL", "").rstrip("/")
+    opt_out = _dashboard_opt_out()
+    if not dash:
+        if opt_out:
+            return _result(
+                cid, title, "skip", started,
+                "DASHBOARD_SERVER_URL unset (SKIP_DASHBOARD_VERIFY=1)",
+            )
+        return _result(
+            cid, title, "fail", started,
+            "DASHBOARD_SERVER_URL unset — cannot determine expected webhook URL",
+            remediation=(
+                "set DASHBOARD_SERVER_URL in .env to your dashboard-server's "
+                "public URL (NOT the VoiceAIMachine FastAPI). See .env.example. "
+                "If this customer is partner-routed, set SKIP_DASHBOARD_VERIFY=1."
+            ),
+        )
+    expected = f"{dash}/webhooks/call-ended"
+    em = _agent_field(agent, "eventMessages")
+    remediation = (
+        "Ultravox console → agent → Integrations → Webhooks → set call.ended "
+        f"URL to {expected} (this is the operator step in /onboard-customer "
+        "Stage 7)."
+    )
+    if not isinstance(em, list) or not em:
+        return _result(
+            cid, title, "fail", started,
+            "agent.eventMessages is empty — call.ended URL not wired",
+            remediation=remediation,
+        )
+    if expected in json.dumps(em):
+        return _result(
+            cid, title, "pass", started,
+            f"eventMessages contains {expected}",
+        )
+    return _result(
+        cid, title, "fail", started,
+        f"eventMessages does not contain expected URL {expected}",
+        remediation=remediation,
+    )
+
+
 # ---------- Checks 8+9: Customer dashboard Supabase -----------------------
+
+
+_DASHBOARD_MISCONFIG_REMEDIATION = (
+    "check SUPABASE_URL points at the SpotFunnel dashboard's Supabase project "
+    "(the one with public.workspaces) and not the operator_ui project — see "
+    ".env.example > 'Operator's Backend'. If this customer is intentionally "
+    "not in the dashboard (e.g. partner-routed), set SKIP_DASHBOARD_VERIFY=1."
+)
 
 
 def _check_dashboard_workspace(slug: str) -> dict:
@@ -544,10 +637,17 @@ def _check_dashboard_workspace(slug: str) -> dict:
     title = "Customer dashboard workspace exists"
     url = os.environ.get("SUPABASE_URL", "")
     key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+    opt_out = _dashboard_opt_out()
     if not url or not key:
+        if opt_out:
+            return _result(
+                cid, title, "skip", started,
+                "SUPABASE_URL/SERVICE_ROLE_KEY unset (SKIP_DASHBOARD_VERIFY=1)",
+            )
         return _result(
-            cid, title, "skip", started,
-            "dashboard schema not provisioned for this customer",
+            cid, title, "fail", started,
+            "SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY unset — cannot probe dashboard",
+            remediation=_DASHBOARD_MISCONFIG_REMEDIATION,
         )
     q = (
         f"{url.rstrip('/')}/rest/v1/workspaces"
@@ -562,19 +662,26 @@ def _check_dashboard_workspace(slug: str) -> dict:
         status, body = _http("GET", q, headers)
     except RuntimeError as e:
         return _result(cid, title, "fail", started, str(e))
-    # PostgREST 404 / 42P01 = table not found → schema not provisioned.
-    if status == 404:
-        return _result(
-            cid, title, "skip", started,
-            "dashboard schema not provisioned for this customer",
-        )
-    if status >= 400:
-        # Body sometimes carries {"code":"42P01"} for missing relation.
-        if isinstance(body, dict) and body.get("code") in ("42P01", "PGRST106"):
+    # PostgREST 404 / 42P01 / PGRST106 = table not found. Used to be a silent
+    # skip; now fails by default to surface the SUPABASE_URL-points-at-wrong-
+    # project misconfig. Escalate back to skip via SKIP_DASHBOARD_VERIFY=1.
+    table_missing = status == 404 or (
+        status >= 400
+        and isinstance(body, dict)
+        and body.get("code") in ("42P01", "PGRST106")
+    )
+    if table_missing:
+        if opt_out:
             return _result(
                 cid, title, "skip", started,
-                "dashboard schema not provisioned for this customer",
+                "workspaces table not in this Supabase project (SKIP_DASHBOARD_VERIFY=1)",
             )
+        return _result(
+            cid, title, "fail", started,
+            "workspaces table missing — SUPABASE_URL likely points at the operator_ui project, not the dashboard",
+            remediation=_DASHBOARD_MISCONFIG_REMEDIATION,
+        )
+    if status >= 400:
         return _result(cid, title, "fail", started, f"workspaces GET HTTP {status}")
     if isinstance(body, list) and body:
         return _result(cid, title, "pass", started, f"workspace row found for {slug}")
@@ -588,17 +695,25 @@ def _check_dashboard_workspace(slug: str) -> dict:
 def _check_dashboard_auth_user(slug: str) -> dict:
     """Probes dashboard auth.users. We can't query auth.users via PostgREST
     directly (it's not exposed), so we look for the public.users row that
-    /onboard-customer creates alongside the workspace. Same skip semantics
-    as check 8."""
+    /onboard-customer creates alongside the workspace. Same opt-out semantics
+    as the workspace check — fails by default on missing creds / table 404,
+    skips when SKIP_DASHBOARD_VERIFY=1."""
     started = time.monotonic()
     cid = "supabase-customer-dashboard-auth-user-exists"
     title = "Customer dashboard auth user exists"
     url = os.environ.get("SUPABASE_URL", "")
     key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+    opt_out = _dashboard_opt_out()
     if not url or not key:
+        if opt_out:
+            return _result(
+                cid, title, "skip", started,
+                "SUPABASE_URL/SERVICE_ROLE_KEY unset (SKIP_DASHBOARD_VERIFY=1)",
+            )
         return _result(
-            cid, title, "skip", started,
-            "dashboard schema not provisioned for this customer",
+            cid, title, "fail", started,
+            "SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY unset — cannot probe dashboard",
+            remediation=_DASHBOARD_MISCONFIG_REMEDIATION,
         )
     q = (
         f"{url.rstrip('/')}/rest/v1/users"
@@ -613,17 +728,23 @@ def _check_dashboard_auth_user(slug: str) -> dict:
         status, body = _http("GET", q, headers)
     except RuntimeError as e:
         return _result(cid, title, "fail", started, str(e))
-    if status == 404:
-        return _result(
-            cid, title, "skip", started,
-            "dashboard schema not provisioned for this customer",
-        )
-    if status >= 400:
-        if isinstance(body, dict) and body.get("code") in ("42P01", "PGRST106", "42703"):
+    table_missing = status == 404 or (
+        status >= 400
+        and isinstance(body, dict)
+        and body.get("code") in ("42P01", "PGRST106", "42703")
+    )
+    if table_missing:
+        if opt_out:
             return _result(
                 cid, title, "skip", started,
-                "dashboard schema not provisioned for this customer",
+                "users table not in this Supabase project (SKIP_DASHBOARD_VERIFY=1)",
             )
+        return _result(
+            cid, title, "fail", started,
+            "users table missing — SUPABASE_URL likely points at the wrong project",
+            remediation=_DASHBOARD_MISCONFIG_REMEDIATION,
+        )
+    if status >= 400:
         return _result(cid, title, "fail", started, f"users GET HTTP {status}")
     if isinstance(body, list) and body:
         return _result(cid, title, "pass", started, f"user row found for {slug}")
@@ -813,13 +934,16 @@ def run_verification(
     checks.append(r6)
     # 7
     checks.append(_check_webhook_callback(conn_id, tx_key, state.get("ultravox_agent_id", "")))
-    # 8
-    checks.append(_check_dashboard_workspace(slug))
+    # 8 — Ultravox call.ended webhook URL points at dashboard-server.
+    # Reuses the agent fetched in check 1 — no extra GET.
+    checks.append(_check_ultravox_call_ended_webhook(agent))
     # 9
-    checks.append(_check_dashboard_auth_user(slug))
+    checks.append(_check_dashboard_workspace(slug))
     # 10
+    checks.append(_check_dashboard_auth_user(slug))
+    # 11
     checks.append(_check_n8n_workflow_active())
-    # 11 (opt-in)
+    # 12 (opt-in)
     if include_call:
         checks.append(_check_test_call(state, tx_key))
 

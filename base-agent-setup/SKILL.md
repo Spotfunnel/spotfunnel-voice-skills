@@ -803,16 +803,19 @@ Exit codes:
 5. Telnyx DID is `active` (state.telnyx_did → GET /v2/phone_numbers)
 6. DID has a connection_id wired (TeXML app)
 7. TeXML app `status_callback` is non-empty
-8. Customer dashboard `workspaces` row exists (skips when SUPABASE_URL unset / table 404)
-9. Customer dashboard `users` row exists (same skip rules)
-10. n8n error-reporter workflow is `active` (skips when N8N_* env unset)
+8. Ultravox `call.ended` webhook URL is set to `$DASHBOARD_SERVER_URL/webhooks/call-ended` (the operator-set step from /onboard-customer Stage 7). FAILS by default; opt out with `SKIP_DASHBOARD_VERIFY=1`.
+9. Customer dashboard `workspaces` row exists. FAILS by default when `SUPABASE_URL` is unset or the `workspaces` table 404s — that's the SUPABASE_URL-points-at-wrong-project misconfig. Opt out with `SKIP_DASHBOARD_VERIFY=1` for partner-routed customers.
+10. Customer dashboard `users` row exists. Same fail-by-default + opt-out semantics as 9.
+11. n8n error-reporter workflow is `active` (skips when N8N_* env unset).
 
 Each row carries `{id, title, status: pass|fail|skip, ms, detail, remediation?}`. Failures include the exact existing script to re-run.
 
 ### Skip vs fail
 
-- **Skip** = the check couldn't run (env missing, table not provisioned, reference agent unfetchable). Skips never count against the run; an all-skip exit code is `0`.
+- **Skip** = the check couldn't run (env missing for non-dashboard checks, reference agent unfetchable, no system-prompt artifact). Skips never count against the run; an all-skip exit code is `0`.
 - **Fail** = the check ran and found a real problem. Surface verbatim; don't auto-fix; HALT the success banner.
+
+The dashboard checks (8, 9, 10) used to skip on missing creds / table 404 / unset DASHBOARD_SERVER_URL. They now fail by default — silent skips disguised the SUPABASE_URL-pointed-at-the-operator_ui-project misconfig. Operators with partner-routed customers that are intentionally not in the SpotFunnel dashboard project keep the old skip semantics by setting `SKIP_DASHBOARD_VERIFY=1` in their `.env`.
 
 ### Resume note
 

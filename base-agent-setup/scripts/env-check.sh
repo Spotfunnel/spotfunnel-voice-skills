@@ -67,6 +67,30 @@ EOF
     echo "  [PASS] no env file → exit 1"
   fi
 
+  echo "[self-test] failure path: SUPABASE_URL == SUPABASE_OPERATOR_URL (#1 misconfig)"
+  cp "$TMPROOT/full.env" "$TMPROOT/dup.env"
+  cat >> "$TMPROOT/dup.env" <<'EOF'
+SUPABASE_OPERATOR_URL=stub
+SUPABASE_OPERATOR_SERVICE_ROLE_KEY=stub
+EOF
+  if SPOTFUNNEL_SKILLS_ENV="$TMPROOT/dup.env" bash "$SCRIPT_PATH" >/dev/null 2>&1; then
+    echo "  [FAIL] identical SUPABASE_URL + SUPABASE_OPERATOR_URL should have exited 1"; exit 1
+  else
+    echo "  [PASS] exit 1 when both URLs match"
+  fi
+
+  echo "[self-test] happy path: differing URLs"
+  cp "$TMPROOT/full.env" "$TMPROOT/split.env"
+  cat >> "$TMPROOT/split.env" <<'EOF'
+SUPABASE_OPERATOR_URL=stub-operator
+SUPABASE_OPERATOR_SERVICE_ROLE_KEY=stub
+EOF
+  if SPOTFUNNEL_SKILLS_ENV="$TMPROOT/split.env" bash "$SCRIPT_PATH" >/dev/null 2>&1; then
+    echo "  [PASS] exit 0 with distinct URLs"
+  else
+    echo "  [FAIL] distinct URLs should have exited 0"; exit 1
+  fi
+
   echo "[self-test] all checks complete"
   exit 0
 fi
@@ -106,5 +130,22 @@ done
 
 if [ $missing -ne 0 ]; then
   echo "See .env.example at repo root for what each var should contain."
+  return 1 2>/dev/null || exit 1
+fi
+
+# Sanity check: SUPABASE_URL (dashboard project) and SUPABASE_OPERATOR_URL
+# (operator_ui project) must be different in production. Identical URLs is
+# the #1 misconfig — it makes /onboard-customer Stage 6a fail with "table
+# public.workspaces does not exist" because operator_ui projects don't host
+# workspaces. We only warn if SUPABASE_OPERATOR_URL is set (it's optional in
+# Path B legacy installs).
+if [ -n "${SUPABASE_OPERATOR_URL:-}" ] && [ "${SUPABASE_URL:-}" = "${SUPABASE_OPERATOR_URL:-}" ]; then
+  echo "[FAIL] SUPABASE_URL and SUPABASE_OPERATOR_URL are pointed at the same project."
+  echo "       SUPABASE_URL must be the customer-facing dashboard's Supabase project"
+  echo "       (hosts public.workspaces, public.users, public.calls)."
+  echo "       SUPABASE_OPERATOR_URL must be the operator_ui project (hosts the"
+  echo "       operator_ui.* schema)."
+  echo "       /onboard-customer Stage 6a will fail until these are split."
+  echo "       See the long comment in .env.example > 'Operator's Backend'."
   return 1 2>/dev/null || exit 1
 fi

@@ -1,7 +1,7 @@
 """Tests for the M15-M17 verify module.
 
-The module at base-agent-setup/server/verify.py runs 10 deterministic checks
-plus an opt-in 11th programmatic test call. Unit tests mock urllib at the
+The module at base-agent-setup/server/verify.py runs 11 deterministic checks
+plus an opt-in 12th programmatic test call. Unit tests mock urllib at the
 HTTP layer (the module is stdlib-only by design — see _ultravox_safe_patch.py
 for the pattern). Persistence is exercised via a live-Supabase fixture
 under @pytest.mark.integration.
@@ -127,6 +127,8 @@ RUN_ID = "run-uuid-1"
 AGENT_ID = "agent-xxxx"
 DID = "+61299990000"
 CONN_ID = "telnyx-app-1"
+DASHBOARD_SERVER = "https://dash-server.test"
+EXPECTED_CALL_ENDED_URL = f"{DASHBOARD_SERVER}/webhooks/call-ended"
 
 
 def _state(**overrides) -> dict:
@@ -135,9 +137,19 @@ def _state(**overrides) -> dict:
     return s
 
 
-def _agent(system_prompt_chars: int = 1000, voice="Steve", temp=0.4, tools=None):
+def _agent(
+    system_prompt_chars: int = 1000,
+    voice="Steve",
+    temp=0.4,
+    tools=None,
+    *,
+    event_messages_url: str | None = EXPECTED_CALL_ENDED_URL,
+):
     if tools is None:
         tools = [{"name": "x"}, {"name": "y"}]
+    event_messages: list[dict] = []
+    if event_messages_url is not None:
+        event_messages = [{"event": "call.ended", "url": event_messages_url}]
     return {
         "agentId": AGENT_ID,
         "callTemplate": {
@@ -145,6 +157,7 @@ def _agent(system_prompt_chars: int = 1000, voice="Steve", temp=0.4, tools=None)
             "voice": {"voiceId": "v-1", "name": voice},
             "temperature": temp,
             "selectedTools": tools,
+            "eventMessages": event_messages,
         },
     }
 
@@ -231,9 +244,13 @@ def _happy_env(monkeypatch):
     monkeypatch.setenv("REFERENCE_ULTRAVOX_AGENT_ID", "ref-agent")
     monkeypatch.setenv("SUPABASE_URL", "https://dash.test")
     monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "dash-key")
+    monkeypatch.setenv("DASHBOARD_SERVER_URL", DASHBOARD_SERVER)
     monkeypatch.setenv("N8N_BASE_URL", "https://n8n.test")
     monkeypatch.setenv("N8N_API_KEY", "n8n-key")
     monkeypatch.setenv("N8N_ERROR_REPORTER_WORKFLOW_ID", "wf-1")
+    # Default-off for the dashboard opt-out so tests exercise the new
+    # fail-by-default semantics. Specific tests set it to assert opt-out.
+    monkeypatch.delenv("SKIP_DASHBOARD_VERIFY", raising=False)
     # Ensure test-call vars are absent unless a test sets them.
     for v in ("TELNYX_TEST_FROM_NUMBER", "TELNYX_TEST_CONNECTION_ID",
               "TELNYX_FROM_NUMBER", "TELNYX_CONNECTION_ID"):
@@ -243,13 +260,13 @@ def _happy_env(monkeypatch):
 # ---------- Unit tests ----------------------------------------------------
 
 
-def test_happy_path_all_ten_pass(monkeypatch):
+def test_happy_path_all_eleven_pass(monkeypatch):
     _happy_env(monkeypatch)
     mod = _import_module()
     fake, _calls = _router(_all_routes_happy())
     with patch("verify_under_test.urllib.request.urlopen", fake):
         report, run_row = mod.run_verification(SLUG)
-    assert report["summary"] == {"pass": 10, "fail": 0, "skip": 0}, report["checks"]
+    assert report["summary"] == {"pass": 11, "fail": 0, "skip": 0}, report["checks"]
     assert run_row["id"] == RUN_ID
     ids = [c["id"] for c in report["checks"]]
     assert ids == [
@@ -260,6 +277,7 @@ def test_happy_path_all_ten_pass(monkeypatch):
         "telnyx-did-active",
         "telnyx-call-routing-wired",
         "webhook-callback-set",
+        "ultravox-call-ended-webhook-set",
         "supabase-customer-dashboard-workspace-exists",
         "supabase-customer-dashboard-auth-user-exists",
         "n8n-error-workflow-active",
@@ -270,9 +288,10 @@ def test_happy_path_all_ten_pass(monkeypatch):
 
 
 def test_ultravox_404_fails_check_one_and_skips_dependents(monkeypatch):
-    """Documents the cascade choice: when the agent GET 404s, checks 2-4
-    'skip' (we can't compare voice/temp/prompt/tools without an agent).
-    Check 1 itself is 'fail' with remediation."""
+    """Documents the cascade choice: when the agent GET 404s, checks 2-4 and
+    the call.ended webhook check 'skip' (we can't compare voice/temp/prompt/
+    tools/eventMessages without an agent). Check 1 itself is 'fail' with
+    remediation."""
     _happy_env(monkeypatch)
     mod = _import_module()
     routes = _all_routes_happy()
@@ -286,7 +305,12 @@ def test_ultravox_404_fails_check_one_and_skips_dependents(monkeypatch):
     assert by_id["ultravox-agent-exists"]["status"] == "fail"
     assert "404" in by_id["ultravox-agent-exists"]["detail"]
     assert "ultravox-create-agent.sh" in by_id["ultravox-agent-exists"]["remediation"]
-    for cid in ("ultravox-voice-temperature", "system-prompt-matches-artifact", "tools-array-matches"):
+    for cid in (
+        "ultravox-voice-temperature",
+        "system-prompt-matches-artifact",
+        "tools-array-matches",
+        "ultravox-call-ended-webhook-set",
+    ):
         assert by_id[cid]["status"] == "skip", by_id[cid]
 
 
@@ -332,8 +356,37 @@ def test_reference_agent_404_skips_checks_2_and_4(monkeypatch):
     assert by_id["system-prompt-matches-artifact"]["status"] == "pass"
 
 
-def test_dashboard_table_404_skips_checks_8_and_9(monkeypatch):
+def test_dashboard_table_404_fails_checks_by_default(monkeypatch):
+    """SUPABASE_URL pointed at a project where workspaces 404s used to be a
+    silent skip. Now fails loud — that's the SUPABASE_URL-points-at-the-wrong-
+    project misconfig (the #1 onboarding bug)."""
     _happy_env(monkeypatch)
+    mod = _import_module()
+    routes = _all_routes_happy()
+    routes["GET https://dash.test/rest/v1/workspaces"] = [
+        _FakeHTTPError("https://dash.test/rest/v1/workspaces", 404, {"code": "42P01"})
+    ]
+    routes["GET https://dash.test/rest/v1/users"] = [
+        _FakeHTTPError("https://dash.test/rest/v1/users", 404, {"code": "42P01"})
+    ]
+    fake, _calls = _router(routes)
+    with patch("verify_under_test.urllib.request.urlopen", fake):
+        report, _ = mod.run_verification(SLUG)
+    by_id = {c["id"]: c for c in report["checks"]}
+    ws = by_id["supabase-customer-dashboard-workspace-exists"]
+    assert ws["status"] == "fail"
+    assert "operator_ui project" in ws["detail"]
+    assert "operator_ui project" in ws["remediation"]
+    au = by_id["supabase-customer-dashboard-auth-user-exists"]
+    assert au["status"] == "fail"
+    assert "wrong project" in au["detail"]
+
+
+def test_dashboard_table_404_skips_when_opt_out_set(monkeypatch):
+    """SKIP_DASHBOARD_VERIFY=1 preserves the legacy skip semantics for partner-
+    routed customers that intentionally aren't in the dashboard project."""
+    _happy_env(monkeypatch)
+    monkeypatch.setenv("SKIP_DASHBOARD_VERIFY", "1")
     mod = _import_module()
     routes = _all_routes_happy()
     routes["GET https://dash.test/rest/v1/workspaces"] = [
@@ -348,7 +401,91 @@ def test_dashboard_table_404_skips_checks_8_and_9(monkeypatch):
     by_id = {c["id"]: c for c in report["checks"]}
     assert by_id["supabase-customer-dashboard-workspace-exists"]["status"] == "skip"
     assert by_id["supabase-customer-dashboard-auth-user-exists"]["status"] == "skip"
-    assert "not provisioned" in by_id["supabase-customer-dashboard-workspace-exists"]["detail"]
+    assert "SKIP_DASHBOARD_VERIFY=1" in by_id["supabase-customer-dashboard-workspace-exists"]["detail"]
+
+
+def test_dashboard_creds_unset_fails_by_default(monkeypatch):
+    """Missing SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY is a misconfig, not a
+    'feature not provisioned'. Fail by default; opt out via flag."""
+    _happy_env(monkeypatch)
+    monkeypatch.delenv("SUPABASE_URL", raising=False)
+    monkeypatch.delenv("SUPABASE_SERVICE_ROLE_KEY", raising=False)
+    mod = _import_module()
+    fake, _calls = _router(_all_routes_happy())
+    with patch("verify_under_test.urllib.request.urlopen", fake):
+        report, _ = mod.run_verification(SLUG)
+    by_id = {c["id"]: c for c in report["checks"]}
+    assert by_id["supabase-customer-dashboard-workspace-exists"]["status"] == "fail"
+    assert by_id["supabase-customer-dashboard-auth-user-exists"]["status"] == "fail"
+
+
+def test_call_ended_webhook_missing_fails(monkeypatch):
+    """eventMessages empty → fail with remediation pointing at the operator's
+    Ultravox console step."""
+    _happy_env(monkeypatch)
+    mod = _import_module()
+    routes = _all_routes_happy()
+    routes[f"GET https://api.ultravox.ai/api/agents/{AGENT_ID}"] = [
+        _FakeResp(200, _agent(event_messages_url=None))
+    ]
+    fake, _calls = _router(routes)
+    with patch("verify_under_test.urllib.request.urlopen", fake):
+        report, _ = mod.run_verification(SLUG)
+    by_id = {c["id"]: c for c in report["checks"]}
+    chk = by_id["ultravox-call-ended-webhook-set"]
+    assert chk["status"] == "fail"
+    assert "empty" in chk["detail"]
+    assert EXPECTED_CALL_ENDED_URL in chk["remediation"]
+
+
+def test_call_ended_webhook_wrong_url_fails(monkeypatch):
+    """eventMessages set but URL differs from $DASHBOARD_SERVER_URL/webhooks/
+    call-ended → fail. Same failure mode as someone pasting the VAM API URL."""
+    _happy_env(monkeypatch)
+    mod = _import_module()
+    routes = _all_routes_happy()
+    routes[f"GET https://api.ultravox.ai/api/agents/{AGENT_ID}"] = [
+        _FakeResp(200, _agent(
+            event_messages_url="https://wrong-host.test/webhooks/call-ended"
+        ))
+    ]
+    fake, _calls = _router(routes)
+    with patch("verify_under_test.urllib.request.urlopen", fake):
+        report, _ = mod.run_verification(SLUG)
+    by_id = {c["id"]: c for c in report["checks"]}
+    chk = by_id["ultravox-call-ended-webhook-set"]
+    assert chk["status"] == "fail"
+    assert "does not contain" in chk["detail"]
+
+
+def test_call_ended_webhook_unset_dashboard_url_fails(monkeypatch):
+    """DASHBOARD_SERVER_URL unset → fail by default (can't determine expected
+    URL). Opt out via SKIP_DASHBOARD_VERIFY=1 — covered by the next test."""
+    _happy_env(monkeypatch)
+    monkeypatch.delenv("DASHBOARD_SERVER_URL", raising=False)
+    mod = _import_module()
+    fake, _calls = _router(_all_routes_happy())
+    with patch("verify_under_test.urllib.request.urlopen", fake):
+        report, _ = mod.run_verification(SLUG)
+    by_id = {c["id"]: c for c in report["checks"]}
+    chk = by_id["ultravox-call-ended-webhook-set"]
+    assert chk["status"] == "fail"
+    assert "DASHBOARD_SERVER_URL" in chk["detail"]
+
+
+def test_call_ended_webhook_skips_when_opt_out_set(monkeypatch):
+    """SKIP_DASHBOARD_VERIFY=1 + DASHBOARD_SERVER_URL unset → skip (not fail)."""
+    _happy_env(monkeypatch)
+    monkeypatch.setenv("SKIP_DASHBOARD_VERIFY", "1")
+    monkeypatch.delenv("DASHBOARD_SERVER_URL", raising=False)
+    mod = _import_module()
+    fake, _calls = _router(_all_routes_happy())
+    with patch("verify_under_test.urllib.request.urlopen", fake):
+        report, _ = mod.run_verification(SLUG)
+    by_id = {c["id"]: c for c in report["checks"]}
+    chk = by_id["ultravox-call-ended-webhook-set"]
+    assert chk["status"] == "skip"
+    assert "SKIP_DASHBOARD_VERIFY=1" in chk["detail"]
 
 
 def test_n8n_workflow_inactive_fails_check_10(monkeypatch):
@@ -384,7 +521,7 @@ def test_include_call_passes_when_env_set(monkeypatch):
     fake, _calls = _router(routes)
     with patch("verify_under_test.urllib.request.urlopen", fake):
         report, _ = mod.run_verification(SLUG, include_call=True)
-    assert len(report["checks"]) == 11
+    assert len(report["checks"]) == 12
     last = report["checks"][-1]
     assert last["id"] == "programmatic-test-call"
     assert last["status"] == "pass"
@@ -398,7 +535,7 @@ def test_include_call_skips_without_env(monkeypatch):
     fake, _calls = _router(_all_routes_happy())
     with patch("verify_under_test.urllib.request.urlopen", fake):
         report, _ = mod.run_verification(SLUG, include_call=True)
-    assert len(report["checks"]) == 11
+    assert len(report["checks"]) == 12
     last = report["checks"][-1]
     assert last["id"] == "programmatic-test-call"
     assert last["status"] == "skip"
@@ -567,6 +704,7 @@ def test_cli_smoke_no_write_json(monkeypatch, tmp_path):
         "REFERENCE_ULTRAVOX_AGENT_ID": "ref-agent",
         "SUPABASE_URL": "https://dash.test",
         "SUPABASE_SERVICE_ROLE_KEY": "dash-key",
+        "DASHBOARD_SERVER_URL": DASHBOARD_SERVER,
         "N8N_BASE_URL": "https://n8n.test",
         "N8N_API_KEY": "n8n-key",
         "N8N_ERROR_REPORTER_WORKFLOW_ID": "wf-1",
@@ -575,6 +713,8 @@ def test_cli_smoke_no_write_json(monkeypatch, tmp_path):
         "TELNYX_TEST_CONNECTION_ID": "",
         "TELNYX_FROM_NUMBER": "",
         "TELNYX_CONNECTION_ID": "",
+        # Force fail-by-default semantics for the CLI smoke too.
+        "SKIP_DASHBOARD_VERIFY": "",
     })
     proc = subprocess.run(
         [_resolve_python(), str(wrapper), "--slug", SLUG, "--no-write", "--json"],
@@ -585,7 +725,7 @@ def test_cli_smoke_no_write_json(monkeypatch, tmp_path):
     )
     assert proc.returncode == 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
     payload = json.loads(proc.stdout)
-    assert payload["summary"]["pass"] == 10
+    assert payload["summary"]["pass"] == 11
     assert payload["summary"]["fail"] == 0
 
 
@@ -713,5 +853,5 @@ def test_no_write_skips_persistence(live_run, monkeypatch):
             params={"run_id": f"eq.{live_run['run_id']}", "select": "id"},
         ).json()
     assert rows == [], rows
-    # Sanity: the report still has all 10 checks.
-    assert len(report["checks"]) == 10
+    # Sanity: the report still has all 11 checks.
+    assert len(report["checks"]) == 11
