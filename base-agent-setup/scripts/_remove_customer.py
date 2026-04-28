@@ -194,7 +194,7 @@ def discover(slug: str) -> Inventory:
     if cust:
         inv.op_customer = cust[0]
         cid = inv.op_customer["id"]
-        inv.op_runs = op_get(f"runs?customer_id=eq.{cid}&select=id,slug_with_ts,started_at")
+        inv.op_runs = op_get(f"runs?customer_id=eq.{cid}&select=id,slug_with_ts,started_at,state")
         run_ids = [r["id"] for r in inv.op_runs]
         if run_ids:
             ids_filter = ",".join(f'"{r}"' for r in run_ids)
@@ -259,8 +259,38 @@ def discover(slug: str) -> Inventory:
     # --- Telnyx claimed-{slug} apps ---------------------------------------
     inv.telnyx_apps = telnyx_list_claimed(slug)
 
-    # --- Ultravox agents matching slug pattern -----------------------------
-    inv.ultravox_agents = ultravox_list_matching_slug(slug)
+    # --- Ultravox agents (multiple sources unioned) ------------------------
+    # Source 1: name-pattern slug match (heuristic, can miss agents named
+    #   off-pattern e.g. E2EToolsTest-Mac when slug is e2e-tools-live-test).
+    # Source 2: agent_tools.attached_to_agent_id (precise — present whenever
+    #   Stage 6.5 ran).
+    # Source 3: deployment_log rows with system='ultravox' (precise — present
+    #   whenever the agent was created via the logged Stage 6 path).
+    # Source 4: state.ultravox_agent_id from any run rows (precise — works
+    #   even when log + tools are missing).
+    by_id: dict[str, dict[str, Any]] = {}
+    for a in ultravox_list_matching_slug(slug):
+        aid = a.get("agentId") or a.get("id")
+        if aid:
+            by_id[aid] = a
+    extra_ids: set[str] = set()
+    for r in inv.op_agent_tools:
+        if r.get("attached_to_agent_id"):
+            extra_ids.add(r["attached_to_agent_id"])
+    for r in inv.log_rows:
+        if r.get("system") == "ultravox" and r.get("target_id"):
+            extra_ids.add(r["target_id"])
+    for r in inv.op_runs:
+        # state column has the run's persisted state JSON
+        st = r.get("state") if isinstance(r.get("state"), dict) else None
+        if st and st.get("ultravox_agent_id"):
+            extra_ids.add(st["ultravox_agent_id"])
+    for aid in extra_ids:
+        if aid not in by_id:
+            # Fetch live so we have name + body for cleanup. None on 404 is
+            # fine — we just have an id, that's enough for DELETE.
+            by_id[aid] = {"agentId": aid, "name": "(unknown)"}
+    inv.ultravox_agents = list(by_id.values())
 
     # --- Local run-dirs ----------------------------------------------------
     runs_root = Path(__file__).resolve().parent.parent / "runs"

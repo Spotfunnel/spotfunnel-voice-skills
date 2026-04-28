@@ -255,31 +255,38 @@ def main(argv: list[str]) -> int:
         )
         return 2
 
-    # --- log_deployment for each tool (so /base-agent remove can replay inverse) ---
-    script_dir = os.path.dirname(os.path.abspath(__file__))
+    # --- Append deployment_log entries inline (no shell subprocess) ---
+    # Earlier rev shelled out to scripts/log_deployment.sh; that produced
+    # "No such file or directory" errors on Git Bash for Windows because
+    # bash interpreted backslashes as escapes. Doing the POST in-process
+    # eliminates the path problem entirely and avoids re-validating args
+    # we already validated above.
     for row in inserted:
-        log_args = [
-            "bash",
-            os.path.join(script_dir, "log_deployment.sh"),
-            "--slug", args.slug,
-            "--run-id", args.run_id,
-            "--stage", "6",
-            "--system", "supabase_operator_ui",
-            "--action", "created",
-            "--target-kind", "row",
-            "--target-id", row["id"],
-            "--payload", json.dumps({"table": "agent_tools", "tool_name": row["tool_name"], "agent_id": args.agent_id}),
-            "--inverse-op", "delete",
-            "--inverse-payload", json.dumps({"table": "agent_tools", "id": row["id"]}),
-        ]
-        try:
-            subprocess.run(log_args, check=True, capture_output=True)
-        except subprocess.CalledProcessError as e:
-            # Don't halt — agent_tools rows are findable via drift detection
-            # if logging is unreliable. Surface the warning.
+        log_row = {
+            "customer_slug": args.slug,
+            "run_id_text": args.run_id,
+            "stage": 6,
+            "system": "supabase_operator_ui",
+            "action": "created",
+            "target_kind": "row",
+            "target_id": row["id"],
+            "payload": {"table": "agent_tools", "tool_name": row["tool_name"], "agent_id": args.agent_id},
+            "inverse_op": "delete",
+            "inverse_payload": {"table": "agent_tools", "id": row["id"]},
+            "status": "active",
+        }
+        status, body = _http(
+            "POST",
+            _op_url("deployment_log"),
+            _op_headers(write=True),
+            log_row,
+        )
+        if status >= 300:
+            # Best-effort — drift detection at remove time will still find
+            # this row via agent_tools.attached_to_agent_id even without a log.
             print(
-                f"[warn] log_deployment failed for agent_tools row {row['id']}: "
-                f"{e.stderr.decode('utf-8', 'replace')[:200]}",
+                f"[warn] deployment_log insert failed for agent_tools row {row['id']}: "
+                f"HTTP {status} — {body[:200]}",
                 file=sys.stderr,
             )
 
