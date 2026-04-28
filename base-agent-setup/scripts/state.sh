@@ -72,6 +72,24 @@ _state_load_supabase() {
   fi
 }
 
+# Internal: append a row to operator_ui.deployment_log capturing one
+# external mutation. Wraps scripts/log_deployment.sh. Best-effort: a log
+# write failure prints to stderr but does NOT halt the calling stage —
+# missing log entries fall back to drift detection at remove time. Stage
+# scripts that need stricter behaviour (Telnyx tag rotation, Ultravox
+# agent creation) call log_deployment.sh directly and check its exit.
+_state_log_deployment() {
+  if ! _state_use_supabase; then
+    return 0
+  fi
+  local script_dir
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+  bash "$script_dir/log_deployment.sh" "$@" || {
+    echo "[warn] _state_log_deployment: failed — drift detection will catch this at remove time" >&2
+    return 0
+  }
+}
+
 # Resolve the runs/ root once. Two-levels-up from this script (scripts/state.sh)
 # lands on base-agent-setup/, so runs/ is just one dir deeper.
 _state_resolve_runs_root() {
@@ -110,8 +128,13 @@ state_init() {
     slug_with_ts="${slug}-${ts}"
 
     # Idempotent upsert on customers (slug is unique). Use Prefer: resolution
-    # so a duplicate slug doesn't 409.
+    # so a duplicate slug doesn't 409. Capture whether THIS call inserted a
+    # new row vs returned an existing one — only log on actual insert so a
+    # resumed run doesn't double-log the customer creation.
     body="$(python3 -c 'import json,sys; print(json.dumps({"slug": sys.argv[1], "name": sys.argv[1]}))' "$slug")"
+    local customer_pre_count
+    customer_pre_count="$(supabase_get "customers?slug=eq.${slug}&select=id" \
+      | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')"
     curl --ssl-no-revoke -sS -X POST \
       -H "apikey: $SUPABASE_OPERATOR_SERVICE_ROLE_KEY" \
       -H "Authorization: Bearer $SUPABASE_OPERATOR_SERVICE_ROLE_KEY" \
@@ -130,6 +153,19 @@ state_init() {
       echo "state_init: failed to resolve customer_id for slug '$slug'" >&2
       return 1
     fi
+    if [ "$customer_pre_count" = "0" ]; then
+      _state_log_deployment \
+        --slug "$slug" \
+        --run-id "$slug_with_ts" \
+        --stage 1 \
+        --system supabase_operator_ui \
+        --action created \
+        --target-kind row \
+        --target-id "$customer_id" \
+        --payload "$(python3 -c 'import json,sys; print(json.dumps({"table":"customers","slug":sys.argv[1]}))' "$slug")" \
+        --inverse-op delete \
+        --inverse-payload "$(python3 -c 'import json,sys; print(json.dumps({"table":"customers","id":sys.argv[1]}))' "$customer_id")"
+    fi
 
     # Insert run row with empty state jsonb. Validate the response shape so a
     # PostgREST error JSON doesn't get silently dropped.
@@ -142,15 +178,29 @@ print(json.dumps({
     "state": {},
 }))
 ' "$customer_id" "$slug_with_ts" "$iso")"
-    local insert_resp
+    local insert_resp run_uuid
     insert_resp="$(supabase_post "runs" "$body")"
-    python3 -c '
+    run_uuid="$(python3 -c '
 import json, sys
 d = json.loads(sys.stdin.read())
 if not isinstance(d, list) or len(d) != 1 or "id" not in d[0]:
     sys.stderr.write(f"state_init: unexpected runs insert response: {d}\n")
     sys.exit(1)
-' <<<"$insert_resp" || return 1
+print(d[0]["id"])
+' <<<"$insert_resp")" || return 1
+
+    # Log the run-row creation.
+    _state_log_deployment \
+      --slug "$slug" \
+      --run-id "$slug_with_ts" \
+      --stage 1 \
+      --system supabase_operator_ui \
+      --action created \
+      --target-kind row \
+      --target-id "$run_uuid" \
+      --payload "$(python3 -c 'import json,sys; print(json.dumps({"table":"runs","slug_with_ts":sys.argv[1]}))' "$slug_with_ts")" \
+      --inverse-op delete \
+      --inverse-payload "$(python3 -c 'import json,sys; print(json.dumps({"table":"runs","id":sys.argv[1]}))' "$run_uuid")"
 
     # Always create a local scratch dir for stage scripts (curl outputs,
     # intermediate JSON, scrape pages). STATE_RUN_DIR stays a real filesystem
@@ -441,6 +491,13 @@ state_set_artifact() {
 
   size="$(wc -c < "$path" | tr -d ' ')"
 
+  # Detect first-write vs update so we only log a new artifact's creation
+  # in deployment_log (re-running a stage updates the existing row, no
+  # additional log entry needed — the inverse is the same DELETE).
+  local pre_count
+  pre_count="$(supabase_get "artifacts?run_id=eq.${run_id}&artifact_name=eq.${name}&select=id" \
+    | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')"
+
   # Build body via Python so embedded newlines, quotes, backslashes, and
   # leading-dash content are JSON-encoded safely.
   body="$(python3 - "$run_id" "$name" "$path" "$size" <<'PY'
@@ -459,7 +516,9 @@ PY
 
   # PostgREST upsert via on_conflict on the unique (run_id, artifact_name).
   # Prefer: resolution=merge-duplicates merges row updates instead of 409.
-  curl --ssl-no-revoke -sS -X POST \
+  # representation returns the inserted/updated row so we can capture id.
+  local upsert_resp artifact_id
+  upsert_resp="$(curl --ssl-no-revoke -sS -X POST \
     -H "apikey: $SUPABASE_OPERATOR_SERVICE_ROLE_KEY" \
     -H "Authorization: Bearer $SUPABASE_OPERATOR_SERVICE_ROLE_KEY" \
     -H "Accept-Profile: $SUPABASE_OPERATOR_SCHEMA" \
@@ -467,8 +526,42 @@ PY
     -H "Content-Type: application/json" \
     -H "Prefer: return=representation,resolution=merge-duplicates" \
     -d "$body" \
-    "$SUPABASE_OPERATOR_URL/rest/v1/artifacts?on_conflict=run_id,artifact_name" \
-    >/dev/null
+    "$SUPABASE_OPERATOR_URL/rest/v1/artifacts?on_conflict=run_id,artifact_name")"
+
+  # Log first writes only — re-runs of the same stage update an existing row
+  # whose deletion is already logged.
+  if [ "$pre_count" = "0" ]; then
+    artifact_id="$(printf '%s' "$upsert_resp" | python3 -c '
+import json, sys
+d = json.loads(sys.stdin.read())
+print(d[0]["id"] if isinstance(d, list) and d and "id" in d[0] else "")
+')"
+    if [ -n "$artifact_id" ]; then
+      # Resolve customer slug via runs.customer_id → customers.slug. The
+      # slug_with_ts string would be ambiguous to parse (timestamps have
+      # their own dashes); a single SELECT round-trip is cleaner.
+      local artifact_slug
+      artifact_slug="$(supabase_get "runs?slug_with_ts=eq.${slug_with_ts}&select=customer:customers(slug)" \
+        | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+print(d[0]["customer"]["slug"] if d and d[0].get("customer") else "")
+')"
+      if [ -n "$artifact_slug" ]; then
+        _state_log_deployment \
+          --slug "$artifact_slug" \
+          --run-id "$slug_with_ts" \
+          --stage 0 \
+          --system supabase_operator_ui \
+          --action created \
+          --target-kind row \
+          --target-id "$artifact_id" \
+          --payload "$(python3 -c 'import json,sys; print(json.dumps({"table":"artifacts","artifact_name":sys.argv[1]}))' "$name")" \
+          --inverse-op delete \
+          --inverse-payload "$(python3 -c 'import json,sys; print(json.dumps({"table":"artifacts","id":sys.argv[1]}))' "$artifact_id")"
+      fi
+    fi
+  fi
 }
 
 # --- state_get_next_stage ------------------------------------------------

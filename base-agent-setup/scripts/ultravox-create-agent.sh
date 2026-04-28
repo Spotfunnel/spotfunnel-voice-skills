@@ -52,6 +52,8 @@ NAME=""
 PROMPT_FILE=""
 SETTINGS_FILE=""
 OUT_DIR=""
+SLUG=""
+RUN_ID=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -69,6 +71,14 @@ while [ $# -gt 0 ]; do
       ;;
     --out)
       OUT_DIR="${2:-}"
+      shift 2
+      ;;
+    --slug)
+      SLUG="${2:-}"
+      shift 2
+      ;;
+    --run-id)
+      RUN_ID="${2:-}"
       shift 2
       ;;
     --help|-h)
@@ -298,6 +308,25 @@ if [ -z "$AGENT_ID" ]; then
   cat "$RESP_FILE" >&2
   echo >&2
   exit 1
+fi
+
+# Append a deployment_log entry capturing the agent creation. Drives the
+# /base-agent remove inverse — read this row at remove-time, DELETE the
+# Ultravox agent by id. Best-effort: if logging fails the agent is still
+# created and drift detection at remove-time will catch it via name match.
+if [ -n "$SLUG" ]; then
+  bash "$SCRIPT_DIR/log_deployment.sh" \
+    --slug "$SLUG" \
+    --run-id "${RUN_ID:-}" \
+    --stage 6 \
+    --system ultravox \
+    --action created \
+    --target-kind agent \
+    --target-id "$AGENT_ID" \
+    --payload "$(python3 -c 'import json,sys; print(json.dumps({"name":sys.argv[1]}))' "$NAME")" \
+    --inverse-op delete \
+    --inverse-payload "$(python3 -c 'import json,sys; print(json.dumps({"agent_id":sys.argv[1]}))' "$AGENT_ID")" \
+    || echo "[warn] log_deployment failed for ultravox agent $AGENT_ID — drift detection will catch it" >&2
 fi
 
 echo "[OK] agent created: id=$AGENT_ID, name=$NAME"

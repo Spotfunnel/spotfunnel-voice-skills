@@ -76,6 +76,7 @@ STRICT_AREA=0
 DRY_RUN=0
 OUT_DIR=""
 CUSTOMER_SLUG=""
+RUN_ID=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -97,6 +98,10 @@ while [ $# -gt 0 ]; do
       ;;
     --out)
       OUT_DIR="${2:-}"
+      shift 2
+      ;;
+    --run-id)
+      RUN_ID="${2:-}"
       shift 2
       ;;
     --help|-h)
@@ -435,4 +440,26 @@ else
   echo "[OK] picked $DID via app $APP_ID (area=$PICKED_AREA, remaining_after=$REMAINING_AFTER, claimed-$CUSTOMER_SLUG)"
 fi
 echo "[INFO] wrote $OUT_PATH"
+
+# Append a deployment_log entry on real claims (skip dry-run). The inverse
+# op `untag_repool` performs full pool restoration: drops the claim tag,
+# resets voice_url to empty, clears any TeXML wiring set by Stages 8/9.
+# That single inverse covers the entire Telnyx-side cleanup so Stages 8/9
+# don't need their own log entries.
+if [ "$DRY_RUN" != "1" ] && [ "$CUSTOMER_SLUG" != "" ] && [ "${CUSTOMER_SLUG#ts-}" = "$CUSTOMER_SLUG" ]; then
+  # Filter out the timestamp fallback slug — those are anonymous claims
+  # (no real customer) and shouldn't be tracked in deployment_log.
+  bash "$SCRIPT_DIR/log_deployment.sh" \
+    --slug "$CUSTOMER_SLUG" \
+    --run-id "${RUN_ID:-}" \
+    --stage 7 \
+    --system telnyx \
+    --action tagged \
+    --target-kind did \
+    --target-id "$APP_ID" \
+    --payload "$(python3 -c 'import json,sys; print(json.dumps({"phone_number":sys.argv[1],"texml_app_id":sys.argv[2],"area_code":sys.argv[3]}))' "$DID" "$APP_ID" "$PICKED_AREA")" \
+    --inverse-op untag_repool \
+    --inverse-payload "$(python3 -c 'import json,sys; print(json.dumps({"texml_app_id":sys.argv[1],"claim_tag":"claimed-"+sys.argv[2],"phone_number":sys.argv[3]}))' "$APP_ID" "$CUSTOMER_SLUG" "$DID")" \
+    || echo "[warn] log_deployment failed for telnyx claim of $DID — drift detection will catch it" >&2
+fi
 exit 0

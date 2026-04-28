@@ -386,7 +386,9 @@ bash scripts/ultravox-create-agent.sh \
   --name "$AGENT_NAME" \
   --system-prompt-file "$STATE_RUN_DIR/system-prompt.md" \
   --settings-file "$STATE_RUN_DIR/reference-settings.json" \
-  --out "$STATE_RUN_DIR"
+  --out "$STATE_RUN_DIR" \
+  --slug "$SLUG" \
+  --run-id "${STATE_RUN_ID:-$(basename "$STATE_RUN_DIR")}"
 ```
 
 Naming convention: `{Customer}-{AgentFirstName}` with no spaces (e.g. `AcmePlumbing-Steve`).
@@ -451,6 +453,8 @@ If the brain-doc has no address (unusual but possible), leave the area code empt
 AREA_CODE="07"  # inferred above; or "" for any
 bash scripts/telnyx-claim-did.sh \
   --area-code "$AREA_CODE" \
+  --customer-slug "$SLUG" \
+  --run-id "${STATE_RUN_ID:-$(basename "$STATE_RUN_DIR")}" \
   --out "$STATE_RUN_DIR"
 ```
 
@@ -1332,6 +1336,68 @@ Verify is read-only (except for the persistence write to `operator_ui.verificati
 | `/base-agent refine [slug]` | Walk open annotations on the latest run, classify per-run vs feedback, spawn a new run with `refined_from_run_id`, regenerate affected artifacts, probe for elevation to lessons. See "Sub-command: /base-agent refine" above. |
 | `/base-agent review-feedback` | Cluster cross-customer feedback into lessons (phase 1), then bake mature lessons into generator prompt files (phase 2). See "Sub-command: /base-agent review-feedback" above. |
 | `/base-agent verify [slug]` | Runs the 10 deterministic checks (11 with `--include-call`) against the most recent run for the slug. Same checks Stage 11.5 runs advisory after every onboarding. See "Sub-command: /base-agent verify" above. |
+| `/base-agent remove [slug]` | Tear down every trace of a customer across operator_ui + dashboard + Telnyx + Ultravox + local FS. See "Sub-command: /base-agent remove" below. |
+
+---
+
+## Sub-command: `/base-agent remove [slug]`
+
+Tear down a customer cleanly. Reads the saga audit log written by every preceding stage, replays inverse operations newest-first, falls back to live-discovery for any drift, verifies zero residue. Halts on Telnyx or Ultravox failures (so a partial wipe never leaves a phone ringing into a deleted agent).
+
+### When to run
+
+- A test/demo customer is no longer needed.
+- A prospect dropped out before deployment was completed.
+- An onboarding ran wrong and you want to start over.
+- A real customer churned and asked for full data deletion.
+
+### What it touches
+
+| System | What gets cleaned |
+|---|---|
+| Supabase `operator_ui` | `customers`, `runs`, `artifacts`, `annotations`, `feedback`, `verifications` rows. `lessons` rows are surgically scrubbed (this customer's id removed from `observed_in_customer_ids`; their `feedback_ids` removed from `source_feedback_ids`); orphan unpromoted lessons get deleted, promoted ones are kept (the prompt file change is git-tracked). |
+| Supabase `dashboard` | `workspaces`, `public.users`, `auth.users` (via Auth Admin API), `calls`, `workflow_errors` rows. Skipped silently if the dashboard schema isn't accessible from the configured Supabase URL (PGRST205). |
+| Telnyx | DIDs tagged `claimed-{slug}` get fully restored: claim tag dropped, `pool-available` re-asserted, `voice_url` cleared, any TeXML wiring from Stages 8/9 reset. Single inverse covers Stages 7+8+9 cleanup. |
+| Ultravox | Agents whose name (case-insensitive, hyphens stripped) contains the slug get DELETEd. |
+| Local FS | All `runs/{slug}-*` directories get `rm -rf`'d. |
+| `operator_ui.deployment_log` | Rows for this slug flip `active` → `reversed` (with timestamps). NOT deleted — kept as a permanent audit trail of "this slug was deployed on X, torn down on Y." |
+
+### What it does NOT touch
+
+- **Per-customer Railway services** (the customer-specific `*-server` deployments). Operator manually tears those down at railway.app — they're separate infra.
+- **Shared central-n8n workflows that have inert `errorWorkflow` pointers** to this customer's external server. Those become dead-ends when the per-customer Railway service goes down.
+- **Promoted-to-prompt lessons** (where `lessons.promoted_to_prompt=true`). The prompt file change is git-tracked methodology evolution, not customer-identifying data.
+
+### Usage
+
+```bash
+# Dry run — enumerate everything that would be deleted, exit without changes
+bash base-agent-setup/scripts/remove-customer.sh acme-plumbing --dry-run
+
+# Real run — print inventory, prompt y/N, tear down on yes
+bash base-agent-setup/scripts/remove-customer.sh acme-plumbing
+
+# Non-interactive (skip the prompt)
+bash base-agent-setup/scripts/remove-customer.sh acme-plumbing --yes
+```
+
+### Safety design
+
+- **Confirmation gate** — single `(y/N)` prompt after the inventory prints. Anything other than literal `y` (case-insensitive) aborts. `--yes` skips for scripted use.
+- **Halt rules** — Telnyx and Ultravox failures abort immediately with exit code 2 (re-run after fixing). Downstream failures (Supabase rows, local FS) are best-effort — the script continues, summarizes, and exits 1 if anything didn't clean up.
+- **Verification phase** — after teardown, re-runs the live-discovery queries. If anything survived (residue), prints what + exits 1. Zero-residue runs print `✓ Verified` + exit 0.
+- **Drift detection** — items found in reality without a matching `deployment_log` entry get a `⚠ Drift detected` warning before the prompt. They still get cleaned up via live-discovery teardown — drift detection is an audit signal, not a blocker.
+
+### Halt conditions
+
+- Telnyx PATCH on the TeXML app fails (network, auth, 5xx) → halt with exit 2. Re-run picks up where it stopped.
+- Ultravox DELETE on the agent fails → halt with exit 2.
+- `operator_ui` REST returns 5xx during discovery → halt early before any destructive action.
+- Slug doesn't match `^[a-z0-9][a-z0-9-]*$` → reject with exit 1 (defensive against shell-injection / typos).
+
+### Resume note
+
+The skill is idempotent. Re-running on a partially-cleaned customer picks up where it stopped: anything already gone is marked `reverse_skipped` automatically; anything still present gets cleaned this run.
 
 ---
 
