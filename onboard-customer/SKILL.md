@@ -522,10 +522,13 @@ DELETE FROM feedback                WHERE workspace_id = $1;
 DELETE FROM call_saves              WHERE call_id IN (SELECT id FROM calls WHERE workspace_id = $1);
 DELETE FROM judgement_clusters      WHERE workspace_id = $1;
 DELETE FROM weekly_batch_runs       WHERE workspace_id = $1;
+DELETE FROM reclassify_jobs         WHERE workspace_id = $1;
 DELETE FROM calls                   WHERE workspace_id = $1;
 DELETE FROM users                   WHERE workspace_id = $1;
 DELETE FROM workspaces              WHERE id = $1;
 ```
+
+`reclassify_jobs` was added 2026-04-28 after the dynamic FK check (above) surfaced it as a child of `workspaces` not in this list. The dynamic check is the authoritative source — re-run it before every undo and add any new tables here as the schema evolves.
 
 **Then delete the auth.users row(s)** so the ex-customer can't magic-link back in. `public.users` is gone but the `auth.users` row persists unless explicitly removed — a customer with a valid auth.users row can still receive magic links and sign in (they'd hit a blank dashboard because `public.users` is missing, which is still a security failure, not an offboarding):
 

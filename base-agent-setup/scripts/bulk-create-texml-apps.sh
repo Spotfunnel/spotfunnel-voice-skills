@@ -18,16 +18,30 @@
 #                                 numbers to operate on. If omitted, the
 #                                 script processes every DID in the account
 #                                 that has no connection_id set.
-#   --dashboard-server-url <url> (optional) overrides $DASHBOARD_SERVER_URL.
-#                                 Used as the base for the status_callback
-#                                 URL on every TeXML app this script creates.
+#   --telnyx-status-callback-url <url>
+#                                (optional) explicit Telnyx TeXML
+#                                 status_callback URL. If omitted, no
+#                                 status_callback is set on the TeXML app.
+#                                 NOTE: this is for Telnyx call-lifecycle
+#                                 events only — distinct from the Ultravox
+#                                 `call.ended` webhook, which is set on each
+#                                 agent in the Ultravox console (see
+#                                 /onboard-customer Stage 7) and points at
+#                                 dashboard-server's /webhooks/call-ended.
+#                                 Reusing the same URL for both was a real
+#                                 bug — they're different services.
 #   --dry-run                    (flag) show what would be created without
 #                                 making any Telnyx mutations.
 #   --help                       print usage.
 #
 # Env:
 #   TELNYX_API_KEY               required.
-#   DASHBOARD_SERVER_URL         required unless --dashboard-server-url is set.
+#   TELNYX_STATUS_CALLBACK_URL   optional. Same effect as
+#                                 --telnyx-status-callback-url. Leave unset
+#                                 if you don't need Telnyx call-lifecycle
+#                                 callbacks (rough /base-agent agents
+#                                 don't — warm-transfer is wired separately
+#                                 if/when it ships).
 #
 # Exit codes:
 #   0   all DIDs processed (or skipped) successfully.
@@ -49,7 +63,7 @@ EOF
 }
 
 DIDS_FILTER=""
-DASHBOARD_URL_OVERRIDE=""
+STATUS_CB_OVERRIDE=""
 DRY_RUN=0
 
 while [ $# -gt 0 ]; do
@@ -58,8 +72,8 @@ while [ $# -gt 0 ]; do
       DIDS_FILTER="${2:-}"
       shift 2
       ;;
-    --dashboard-server-url)
-      DASHBOARD_URL_OVERRIDE="${2:-}"
+    --telnyx-status-callback-url)
+      STATUS_CB_OVERRIDE="${2:-}"
       shift 2
       ;;
     --dry-run)
@@ -87,21 +101,22 @@ if [ -z "${TELNYX_API_KEY:-}" ]; then
   exit 1
 fi
 
-DASHBOARD_URL="${DASHBOARD_URL_OVERRIDE:-${DASHBOARD_SERVER_URL:-}}"
-if [ -z "$DASHBOARD_URL" ]; then
-  echo "[ERR] no --dashboard-server-url and DASHBOARD_SERVER_URL is empty" >&2
-  exit 1
-fi
-
-# Strip any trailing slash so the joined URL is clean.
-DASHBOARD_URL="${DASHBOARD_URL%/}"
-STATUS_CALLBACK_URL="${DASHBOARD_URL}/webhooks/call-ended"
+# Telnyx call-lifecycle status_callback. Distinct from the Ultravox
+# `call.ended` webhook (which is set on each agent in the Ultravox console
+# and points at dashboard-server). Empty by default — rough /base-agent
+# agents don't need Telnyx-side call-lifecycle callbacks.
+STATUS_CALLBACK_URL="${STATUS_CB_OVERRIDE:-${TELNYX_STATUS_CALLBACK_URL:-}}"
+STATUS_CALLBACK_URL="${STATUS_CALLBACK_URL%/}"
 VOICE_URL_PLACEHOLDER="https://app.ultravox.ai/api/agents/PLACEHOLDER/telephony_xml"
 
 if [ "$DRY_RUN" = "1" ]; then
   echo "[INFO] DRY RUN — no Telnyx mutations will be made"
 fi
-echo "[INFO] status_callback_url = $STATUS_CALLBACK_URL"
+if [ -n "$STATUS_CALLBACK_URL" ]; then
+  echo "[INFO] status_callback_url = $STATUS_CALLBACK_URL"
+else
+  echo "[INFO] status_callback_url = <omitted> (no Telnyx call-lifecycle callbacks)"
+fi
 echo "[INFO] voice_url placeholder = $VOICE_URL_PLACEHOLDER"
 
 # ----- Step 1: list every DID in the account -----
@@ -194,7 +209,9 @@ while IFS=$'\t' read -r DID PN_ID CURRENT_CONN TAGS_CSV; do
     continue
   fi
 
-  # Build the TeXML app payload.
+  # Build the TeXML app payload. status_callback is omitted entirely when
+  # STATUS_CALLBACK_URL is empty — Telnyx accepts a TeXML app without one
+  # and simply doesn't fire call-lifecycle callbacks.
   CREATE_PAYLOAD="$(FRIENDLY_NAME="$FRIENDLY_NAME" \
                     VOICE_URL="$VOICE_URL_PLACEHOLDER" \
                     STATUS_CB_URL="$STATUS_CALLBACK_URL" \
@@ -204,14 +221,16 @@ payload = {
     "friendly_name": os.environ["FRIENDLY_NAME"],
     "voice_url": os.environ["VOICE_URL"],
     "voice_method": "POST",
-    "status_callback": os.environ["STATUS_CB_URL"],
-    "status_callback_method": "POST",
     "anchorsite_override": "Latency",
     "inbound": {
         "codecs": ["OPUS", "G711U"],
     },
     "tags": ["pool-available"],
 }
+status_cb = os.environ.get("STATUS_CB_URL", "").strip()
+if status_cb:
+    payload["status_callback"] = status_cb
+    payload["status_callback_method"] = "POST"
 print(json.dumps(payload))
 PY
 )"
