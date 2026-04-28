@@ -188,16 +188,23 @@ def main(argv: list[str]) -> int:
     pre = _filter_drift(agent)
 
     # --- Build new selectedTools ---
+    # agent_id is included as a parameterOverride on every tool so the
+    # voice-tools-server webhook handlers can resolve which workspace owns
+    # this call. Without it, the handlers can't look up per-customer config.
     new_tools = [
         {
             "toolId": transfer_tool_id,
             "nameOverride": "warmTransfer",
-            "parameterOverrides": {"destination_phone": phone},
+            "parameterOverrides": {
+                "agent_id": args.agent_id,
+                "destination_phone": phone,
+            },
         },
         {
             "toolId": take_message_tool_id,
             "nameOverride": "takeMessage",
             "parameterOverrides": {
+                "agent_id": args.agent_id,
                 "recipient_channel": "email",
                 "recipient_address": email,
             },
