@@ -40,11 +40,11 @@ export function AgentCard({
             <FieldRow label="ID" mono>
               {truncateUuid(info.agentId)}
             </FieldRow>
-            <FieldRow label="Voice" empty={!info.voiceId} mono>
-              {info.voiceId}
+            <FieldRow label="Voice" empty={!info.voiceId && info.voiceTempStatus !== "match"} mono>
+              {info.voiceId ?? (info.voiceTempStatus === "match" ? "matches reference" : null)}
             </FieldRow>
-            <FieldRow label="Temperature" empty={!info.temperature} mono>
-              {info.temperature}
+            <FieldRow label="Temperature" empty={!info.temperature && info.voiceTempStatus !== "match"} mono>
+              {info.temperature ?? (info.voiceTempStatus === "match" ? "matches reference" : null)}
             </FieldRow>
             <FieldRow label="Prompt size" empty={!info.systemPromptBytes}>
               {info.systemPromptBytes

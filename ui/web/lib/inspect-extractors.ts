@@ -92,36 +92,51 @@ export type AgentInfo = {
   voiceId: string | null;
   temperature: string | null;
   systemPromptBytes: number | null;
+  // Pass-through summaries when verify says "match" but doesn't include
+  // numeric values — UI shows these instead of "—" so the operator gets
+  // a meaningful signal.
+  voiceTempStatus: "match" | "mismatch" | null;
 };
 
 // Extract Ultravox agent info. Voice + temperature come from the
-// "ultravox-voice-temperature" check's detail string. System-prompt size
-// comes from "system-prompt-matches-artifact" (which says e.g.
-// "sizes match (18432 bytes)" or "size 5421 bytes").
+// "ultravox-voice-temperature" check's detail string. verify.py currently
+// emits "voice + temp match ref" on pass and includes specific values only
+// on mismatch. system-prompt-matches-artifact says e.g. "byte-equal to
+// artifact (13311 chars)" — we treat chars as bytes for ASCII-ish prompts.
 export function extractAgentInfo(
   state: RunStateLike | null | undefined,
   checks: ReadonlyArray<CheckRow>,
 ): AgentInfo {
-  const voiceTempDetail = findCheck(checks, "ultravox-voice-temperature")?.detail ?? "";
+  const voiceTempCheck = findCheck(checks, "ultravox-voice-temperature");
+  const voiceTempDetail = voiceTempCheck?.detail ?? "";
   const systemPromptDetail = findCheck(checks, "system-prompt-matches-artifact")?.detail ?? "";
 
-  // verify.py emits e.g. "voice + temp match ref" on pass; on detail mismatches
-  // the message includes the specific values. We don't have a guaranteed shape,
-  // so try a few patterns.
-  const voiceMatch = voiceTempDetail.match(/voice[:= ]+([\w\d-]+)/i);
+  // Mismatch detail shape is e.g. "voice mismatch: agent=foo ref=bar" or
+  // "voice <id> temp <value>". Pass detail is just "voice + temp match ref".
+  const voiceMatch = voiceTempDetail.match(/voice[:= ]+([a-z0-9-]+)/i);
   const tempMatch = voiceTempDetail.match(/temp(?:erature)?[:= ]+([\d.]+)/i);
 
-  const sizeMatch = systemPromptDetail.match(/(\d+)\s*bytes/);
+  // Both "(N chars)" and "(N bytes)" are valid output forms; verify.py
+  // currently emits "(N chars)" but older runs may have "(N bytes)".
+  const sizeMatch = systemPromptDetail.match(/\((\d+)\s*(?:bytes|chars)\)/);
   const systemPromptBytes = sizeMatch ? parseInt(sizeMatch[1], 10) : null;
+
+  let voiceTempStatus: "match" | "mismatch" | null = null;
+  if (voiceTempCheck) {
+    const status = (voiceTempCheck.status ?? "").toLowerCase();
+    if (status === "pass") voiceTempStatus = "match";
+    else if (status === "fail") voiceTempStatus = "mismatch";
+  }
 
   return {
     agentId: state?.ultravox_agent_id ?? null,
     agentFirstName: state?.agent_first_name ?? null,
     customerName: state?.customer_name ?? null,
-    voice: null, // verify currently emits a pass message without naming the voice; deferred
+    voice: null,
     voiceId: voiceMatch ? voiceMatch[1] : null,
     temperature: tempMatch ? tempMatch[1] : null,
     systemPromptBytes,
+    voiceTempStatus,
   };
 }
 
@@ -164,13 +179,24 @@ export function extractTelephony(
   const phone = state?.telnyx_did ?? state?.did ?? null;
   const didDetail = findCheck(checks, "telnyx-did-active")?.detail ?? "";
   const routingDetail = findCheck(checks, "telnyx-call-routing-wired")?.detail ?? "";
+  const callbackCheck = findCheck(checks, "webhook-callback-set");
+  const callbackDetail = callbackCheck?.detail ?? "";
 
-  const voiceUrlMatch = (didDetail + " " + routingDetail).match(
-    /voice_url=([^\s,]+)/,
-  );
-  const callbackMatch = findCheck(checks, "webhook-callback-set")?.detail?.match(
-    /(https?:\/\/[^\s,]+)/,
-  );
+  // verify.py routing detail is e.g. "connection_id=...; expected
+  // voice_url -> https://...". Match either `voice_url -> URL` or
+  // `voice_url=URL` to handle both shapes.
+  const combined = didDetail + " " + routingDetail;
+  const voiceUrlMatch =
+    combined.match(/voice_url\s*->\s*(https?:\/\/\S+)/) ||
+    combined.match(/voice_url=([^\s,;]+)/);
+
+  // status_callback URL: verify.py currently just says "status_callback
+  // set" on pass — no URL in the detail. Fall back to a "✓ set"
+  // sentinel string so the UI shows useful state instead of "—".
+  let statusCallback: string | null = null;
+  const cbUrlMatch = callbackDetail.match(/(https?:\/\/[^\s,]+)/);
+  if (cbUrlMatch) statusCallback = cbUrlMatch[1];
+  else if (callbackCheck?.status === "pass") statusCallback = "✓ set";
 
   return {
     phone,
@@ -178,7 +204,7 @@ export function extractTelephony(
     areaCode: state?.area_code ?? null,
     texmlAppId: state?.texml_app_id ?? null,
     voiceUrl: voiceUrlMatch ? voiceUrlMatch[1] : null,
-    statusCallback: callbackMatch ? callbackMatch[1] : null,
+    statusCallback,
   };
 }
 
