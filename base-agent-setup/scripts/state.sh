@@ -131,7 +131,18 @@ state_init() {
     # so a duplicate slug doesn't 409. Capture whether THIS call inserted a
     # new row vs returned an existing one — only log on actual insert so a
     # resumed run doesn't double-log the customer creation.
-    body="$(python3 -c 'import json,sys; print(json.dumps({"slug": sys.argv[1], "name": sys.argv[1]}))' "$slug")"
+    #
+    # Customer NAME defaults to the Title-Cased slug (goulburn-transport →
+    # "Goulburn Transport") so the operator UI homepage shows a presentable
+    # name without the operator having to manually UPDATE customers.name
+    # post-init. Operator can still override via direct PATCH later if the
+    # customer's brand-name capitalization is non-standard (e.g. "iPhone Co").
+    body="$(python3 -c '
+import json, sys
+slug = sys.argv[1]
+name = " ".join(part.capitalize() for part in slug.split("-") if part)
+print(json.dumps({"slug": slug, "name": name}))
+' "$slug")"
     local customer_pre_count
     customer_pre_count="$(supabase_get "customers?slug=eq.${slug}&select=id" \
       | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')"
