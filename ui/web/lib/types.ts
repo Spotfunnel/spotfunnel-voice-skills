@@ -10,13 +10,21 @@ export type Customer = {
 };
 
 // Customer + the rollups the list page needs to render its rows. Computed
-// server-side from runs/annotations/verifications so the card stays a dumb
-// presentation component.
+// server-side from runs/annotations/verifications/agent_tools so the card
+// stays a dumb presentation component.
 export type CustomerSummary = Customer & {
   run_count: number;
   latest_run_at: string | null;
   latest_stage: number | null;
   open_annotations: number;
+  // E.164 from the latest run's state.telnyx_did. null = no DID claimed
+  // (existing per-customer-server installs read here too because their
+  // claimed DID also lands in runs.state).
+  phone: string | null;
+  // Count of operator_ui.agent_tools rows for this customer. 0 = either no
+  // Stage 6.5 yet or per-customer-server install — render hidden in either
+  // case so the homepage stays quiet for legacy customers.
+  tools_count: number;
   // "pass" | "fail" | "partial" | "in-progress" | "none" — drives the dot
   // color. "in-progress" means the latest run hasn't reached stage 11 yet,
   // separate from verification outcome.

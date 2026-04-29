@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { CustomerSummary } from "@/lib/types";
+import { formatAuPhone } from "@/lib/inspect-extractors";
 
 const DOT_COLOR: Record<CustomerSummary["status"], string> = {
   pass: "#4F8C5A", // muted forest
@@ -42,11 +43,18 @@ export function CustomerCard({ customer }: { customer: CustomerSummary }) {
     customer.latest_stage !== null && customer.latest_stage < 11
       ? `stage ${customer.latest_stage}/11`
       : null;
+  const phoneFormatted = formatAuPhone(customer.phone);
+  // Show the second strip when EITHER value carries information. Existing
+  // per-customer-server installs (no agent_tools rows) keep the strip when
+  // they have a phone — symmetric with how `open_annotations` only renders
+  // when > 0. Avoids dead-pixel rows for never-claimed customers.
+  const showSecondStrip =
+    Boolean(phoneFormatted) || customer.tools_count > 0;
 
   return (
     <Link
       href={`/c/${customer.slug}`}
-      className="group flex items-center gap-8 px-2 -mx-2 py-7 border-b border-[#EDECE6] transition-colors duration-150 hover:bg-[#F4F2EC]"
+      className="group flex items-start gap-8 px-2 -mx-2 py-7 border-b border-[#EDECE6] transition-colors duration-150 hover:bg-[#F4F2EC]"
       data-testid={`customer-card-${customer.slug}`}
     >
       <div className="min-w-0 flex-1">
@@ -66,29 +74,49 @@ export function CustomerCard({ customer }: { customer: CustomerSummary }) {
         </p>
       </div>
 
-      <div className="flex items-center gap-3 whitespace-nowrap text-[12px] text-[#7A7A72]">
-        {customer.run_count > 0 ? (
-          <>
-            <span>
-              {customer.run_count} run{customer.run_count === 1 ? "" : "s"}
-            </span>
-            <span className="text-[#D8D5CC]">·</span>
-          </>
-        ) : null}
-        <span>{ago}</span>
-        {stagePart ? (
-          <>
-            <span className="text-[#D8D5CC]">·</span>
-            <span>{stagePart}</span>
-          </>
-        ) : null}
-        {customer.open_annotations > 0 ? (
-          <>
-            <span className="text-[#D8D5CC]">·</span>
-            <span className="font-medium text-[#1A1A1A]">
-              {customer.open_annotations} open
-            </span>
-          </>
+      <div className="flex flex-col items-end gap-2 whitespace-nowrap">
+        <div className="flex items-center gap-3 text-[12px] text-[#7A7A72]">
+          {customer.run_count > 0 ? (
+            <>
+              <span>
+                {customer.run_count} run{customer.run_count === 1 ? "" : "s"}
+              </span>
+              <span className="text-[#D8D5CC]">·</span>
+            </>
+          ) : null}
+          <span>{ago}</span>
+          {stagePart ? (
+            <>
+              <span className="text-[#D8D5CC]">·</span>
+              <span>{stagePart}</span>
+            </>
+          ) : null}
+          {customer.open_annotations > 0 ? (
+            <>
+              <span className="text-[#D8D5CC]">·</span>
+              <span className="font-medium text-[#1A1A1A]">
+                {customer.open_annotations} open
+              </span>
+            </>
+          ) : null}
+        </div>
+        {showSecondStrip ? (
+          <div
+            className="flex items-center gap-3 font-mono text-[11px] text-[#9A9A92]"
+            data-testid={`customer-card-meta-${customer.slug}`}
+          >
+            {phoneFormatted ? (
+              <span data-testid="customer-card-phone">{phoneFormatted}</span>
+            ) : null}
+            {phoneFormatted && customer.tools_count > 0 ? (
+              <span className="text-[#D8D5CC]">·</span>
+            ) : null}
+            {customer.tools_count > 0 ? (
+              <span data-testid="customer-card-tools-count">
+                {customer.tools_count} tool{customer.tools_count === 1 ? "" : "s"}
+              </span>
+            ) : null}
+          </div>
         ) : null}
       </div>
     </Link>

@@ -15,6 +15,17 @@ type RunRow = {
   stage_complete: number;
 };
 
+// Subset of runs.state we read for the homepage strip — only the DID matters
+// here. The strip on each customer card surfaces the latest run's claimed DID
+// so operators can scan "who has a phone number wired?" at a glance.
+type RunStateRow = {
+  customer_id: string;
+  started_at: string;
+  state: { telnyx_did?: string; did?: string; [k: string]: unknown };
+};
+
+type AgentToolsCountRow = { customer_id: string };
+
 function classify(
   latest: RunRow | undefined,
   summary: VerificationSummary | undefined,
@@ -44,7 +55,7 @@ export default async function Home() {
 
   let summaries: CustomerSummary[] = [];
   if (customerIds.length > 0) {
-    const [runsRes, annRes, verRes] = await Promise.all([
+    const [runsRes, annRes, verRes, runsStateRes, toolsRes] = await Promise.all([
       supabase
         .from("runs")
         .select("id, customer_id, started_at, stage_complete")
@@ -57,6 +68,21 @@ export default async function Home() {
         .from("verifications")
         .select("run_id, summary, verified_at")
         .order("verified_at", { ascending: false }),
+      // Latest run state per customer — driven via descending order so the
+      // first entry per customer_id is the most recent. Used to surface the
+      // claimed DID on the homepage card.
+      supabase
+        .from("runs")
+        .select("customer_id, started_at, state")
+        .in("customer_id", customerIds)
+        .order("started_at", { ascending: false }),
+      // Per-customer base-tools count. agent_tools rows are 1-per-tool — each
+      // base-tools customer gets 2 (transfer + take-message). Existing per-
+      // customer-server installs (Teleca, TelcoWorks) have zero rows here.
+      supabase
+        .from("agent_tools")
+        .select("customer_id")
+        .in("customer_id", customerIds),
     ]);
 
     if (runsRes.error)
@@ -65,8 +91,34 @@ export default async function Home() {
       throw new Error(`Failed to load annotations: ${annRes.error.message}`);
     if (verRes.error)
       throw new Error(`Failed to load verifications: ${verRes.error.message}`);
+    if (runsStateRes.error)
+      throw new Error(`Failed to load run states: ${runsStateRes.error.message}`);
+    if (toolsRes.error)
+      throw new Error(`Failed to load agent_tools: ${toolsRes.error.message}`);
 
     const runs = (runsRes.data ?? []) as RunRow[];
+    const runStates = (runsStateRes.data ?? []) as RunStateRow[];
+    const toolsRows = (toolsRes.data ?? []) as AgentToolsCountRow[];
+
+    // Map customer_id → DID from the latest run (first row wins because we
+    // ordered desc above).
+    const phoneByCustomer = new Map<string, string>();
+    for (const r of runStates) {
+      if (phoneByCustomer.has(r.customer_id)) continue;
+      const did = r.state?.telnyx_did ?? r.state?.did ?? null;
+      if (did && typeof did === "string") {
+        phoneByCustomer.set(r.customer_id, did);
+      } else {
+        // Mark as "looked at, none found" so older runs don't override.
+        phoneByCustomer.set(r.customer_id, "");
+      }
+    }
+
+    // Map customer_id → tools_count.
+    const toolsByCustomer = new Map<string, number>();
+    for (const t of toolsRows) {
+      toolsByCustomer.set(t.customer_id, (toolsByCustomer.get(t.customer_id) ?? 0) + 1);
+    }
     const customerRuns = new Map<string, RunRow[]>();
     for (const r of runs) {
       const list = customerRuns.get(r.customer_id) ?? [];
@@ -105,12 +157,15 @@ export default async function Home() {
         0,
       );
       const verSummary = latest ? latestVerByRun.get(latest.id) : undefined;
+      const phoneRaw = phoneByCustomer.get(c.id);
       return {
         ...c,
         run_count: cRuns.length,
         latest_run_at: latest?.started_at ?? null,
         latest_stage: latest?.stage_complete ?? null,
         open_annotations: openCount,
+        phone: phoneRaw && phoneRaw.length > 0 ? phoneRaw : null,
+        tools_count: toolsByCustomer.get(c.id) ?? 0,
         status: classify(latest, verSummary),
       };
     });
