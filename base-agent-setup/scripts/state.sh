@@ -498,21 +498,28 @@ state_set_artifact() {
   pre_count="$(supabase_get "artifacts?run_id=eq.${run_id}&artifact_name=eq.${name}&select=id" \
     | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')"
 
-  # Build body via Python so embedded newlines, quotes, backslashes, and
-  # leading-dash content are JSON-encoded safely.
-  body="$(python3 - "$run_id" "$name" "$path" "$size" <<'PY'
+  # Build body via Python and write to a temp file. Inline -d "$body" blows
+  # past the Windows ARG_MAX (~32KB) for large artifacts (scraped-pages
+  # combined.md routinely hits 60KB+). --data-binary @file sidesteps the
+  # arg-length limit entirely. Cleanup via local trap so the temp file
+  # doesn't leak even if curl errors.
+  local tmp_dir tmp_body
+  tmp_dir="${TMPDIR:-$HOME/.tmp-spotfunnel-skills}"
+  mkdir -p "$tmp_dir"
+  tmp_body="$tmp_dir/state_artifact_body.$$.json"
+  python3 - "$run_id" "$name" "$path" "$size" "$tmp_body" <<'PY'
 import json, sys
-run_id, name, path, size = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4])
+run_id, name, path, size, out_path = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4]), sys.argv[5]
 with open(path, "r", encoding="utf-8") as f:
     content = f.read()
-print(json.dumps({
-    "run_id": run_id,
-    "artifact_name": name,
-    "content": content,
-    "size_bytes": size,
-}))
+with open(out_path, "w", encoding="utf-8") as f:
+    json.dump({
+        "run_id": run_id,
+        "artifact_name": name,
+        "content": content,
+        "size_bytes": size,
+    }, f)
 PY
-)"
 
   # PostgREST upsert via on_conflict on the unique (run_id, artifact_name).
   # Prefer: resolution=merge-duplicates merges row updates instead of 409.
@@ -525,8 +532,9 @@ PY
     -H "Content-Profile: $SUPABASE_OPERATOR_SCHEMA" \
     -H "Content-Type: application/json" \
     -H "Prefer: return=representation,resolution=merge-duplicates" \
-    -d "$body" \
+    --data-binary "@$tmp_body" \
     "$SUPABASE_OPERATOR_URL/rest/v1/artifacts?on_conflict=run_id,artifact_name")"
+  rm -f "$tmp_body"
 
   # Log first writes only — re-runs of the same stage update an existing row
   # whose deletion is already logged.

@@ -46,15 +46,10 @@ export function ConnectionsTab({
   state,
   checks,
   tools,
-  toolsCustomerType,
 }: {
   state: RunStateLike | null;
   checks: ReadonlyArray<CheckRow>;
   tools: ReadonlyArray<AgentToolRow>;
-  // 'base' = at least one agent_tools row (Stage 6.5 ran).
-  // 'legacy' = zero rows but the customer is otherwise live (Teleca etc.).
-  // 'none' = brand-new customer, never reached Stage 6.5.
-  toolsCustomerType: "base" | "legacy" | "none";
 }) {
   const tel = extractTelephony(state, checks);
   const dash = extractDashboard(checks);
@@ -68,9 +63,7 @@ export function ConnectionsTab({
         <div className="mt-4">
           {tools.length === 0 ? (
             <p className="text-[14px] text-[#7A7A72]">
-              {toolsCustomerType === "legacy"
-                ? "Per-customer server install — tools live on the customer's Railway service, not in operator_ui."
-                : "No base tools attached. Operator runs /base-agent Stage 6.5 to add transfer + take-message."}
+              No base tools attached. Operator runs /base-agent Stage 6.5 to add transfer + take-message.
             </p>
           ) : (
             <div className="-mt-4">

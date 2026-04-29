@@ -165,16 +165,6 @@ export default async function CustomerPage({
     auditRows = (logRes ?? []) as DeploymentLogRow[];
   }
 
-  // Toolset detection — base-tools customers have rows; legacy per-customer-
-  // server installs have zero. Used by ConnectionsTab to show the right
-  // empty-state copy.
-  const toolsCustomerType: "base" | "legacy" | "none" =
-    toolsRows.length > 0
-      ? "base"
-      : run && run.stage_complete >= 6
-        ? "legacy"
-        : "none";
-
   const checks: ReadonlyArray<CheckRow> = Array.isArray(verification?.checks)
     ? (verification!.checks as CheckRow[])
     : [];
@@ -211,12 +201,7 @@ export default async function CustomerPage({
           />
         ) : null}
         {currentTab === "connections" ? (
-          <ConnectionsTab
-            state={runState}
-            checks={checks}
-            tools={toolsRows}
-            toolsCustomerType={toolsCustomerType}
-          />
+          <ConnectionsTab state={runState} checks={checks} tools={toolsRows} />
         ) : null}
         {currentTab === "read" ? (
           <ReadTab
